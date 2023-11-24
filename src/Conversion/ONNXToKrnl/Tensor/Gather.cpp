@@ -12,16 +12,24 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "mlir/Support/LLVM.h"
+#include "mlir/Support/LogicalResult.h"
+#include "mlir/Dialect/zkml/IR/Gather.h"
 #include "src/Conversion/ONNXToKrnl/ONNXToKrnlCommon.hpp"
 #include "src/Dialect/ONNX/ONNXOps/ShapeHelper.hpp"
 
 using namespace mlir;
+using ZKMLGatherOp = zk_ml_toolchain::zkml::GatherOp;
 
 namespace onnx_mlir {
 
 struct ONNXGatherOpLowering : public OpConversionPattern<ONNXGatherOp> {
-  ONNXGatherOpLowering(TypeConverter &typeConverter, MLIRContext *ctx)
-      : OpConversionPattern(typeConverter, ctx) {}
+  ONNXGatherOpLowering(
+      TypeConverter &typeConverter, MLIRContext *ctx, bool zkMl)
+      : OpConversionPattern(typeConverter, ctx), zkMl(zkMl) {}
+
+private:
+  bool zkMl;
 
   LogicalResult matchAndRewrite(ONNXGatherOp gatherOp,
       ONNXGatherOpAdaptor adaptor,
@@ -54,79 +62,67 @@ struct ONNXGatherOpLowering : public OpConversionPattern<ONNXGatherOp> {
     int64_t dataRank = data.getType().cast<MemRefType>().getRank();
     int64_t indicesRank = indices.getType().cast<MemRefType>().getRank();
 
-    // Determine whether indices may be negative.
-    bool indicesMayBeNegative = !indicesAreNonNegativeConstants(indices);
+    if (this->zkMl) {
+      OpBuilder builder(op);
+      auto NewGatherOp = builder.create<ZKMLGatherOp>(
+          op->getLoc(), outputMemRefType, data, indices, gatherOp.getAxis());
+      rewriter.replaceOp(op, NewGatherOp->getResult(0));
+    } else {
+      // Insert an allocation and deallocation for the output of this operation.
+      Value alloc = insertAllocAndDeallocSimple(
+          rewriter, op, outputMemRefType, loc, shapeHelper.getOutputDims());
 
-    // Negative value means counting dimensions from the back.
-    axisLit = axisLit < 0 ? axisLit + dataRank : axisLit;
+      int64_t axisLit = gatherOp.getAxis();
+      int64_t dataRank = data.getType().cast<MemRefType>().getRank();
+      int64_t indicesRank = indices.getType().cast<MemRefType>().getRank();
 
-    int64_t outputRank = shapeHelper.getOutputDims().size();
-    int iIndexStart = 0;
-    int jIndexStart = iIndexStart + axisLit;
-    int kIndexStart = jIndexStart + indicesRank - (axisLit + 1);
+      // Determine whether indices may be negative.
+      bool indicesMayBeNegative = !indicesAreNonNegativeConstants(indices);
 
-    LiteralIndexExpr zeroIE(0);
-    DimsExpr dataDims;
-    create.krnlIE.getShapeAsDims(data, dataDims);
+      // Negative value means counting dimensions from the back.
+      axisLit = axisLit < 0 ? axisLit + dataRank : axisLit;
 
-    /*
-      The pattern that we are using is that of numpy.take.
+      int64_t outputRank = shapeHelper.getOutputDims().size();
+      int iIndexStart = 0;
+      int jIndexStart = iIndexStart + axisLit;
+      int kIndexStart = jIndexStart + indicesRank - (axisLit + 1);
 
-      Ni, Nk = data.shape[:axis], data.shape[axis+1:]
-      Nj = indices.shape
-      for ii in ndindex(Ni):
-        for jj in ndindex(Nj):
-          for kk in ndindex(Nk):
-            out[ii + jj + kk] = data[ii + (indices[jj],) + kk]
-    */
-    // Define loops and iteration trip counts (equivalent to size of output)
-    ValueRange loopDef = create.krnl.defineLoops(outputRank);
-    DimsExpr lbs(outputRank, zeroIE);
-    create.krnl.iterateIE(loopDef, loopDef, lbs, shapeHelper.getOutputDims(),
-        [&](KrnlBuilder &createKrnl, ValueRange loopInd) {
-          // Insert code inside the loop.
-          IndexExprScope innerLoopScope(createKrnl);
-          SymbolIndexExpr axisDim(dataDims[axisLit]);
+      LiteralIndexExpr zeroIE(0);
+      DimsExpr dataDims;
+      create.krnlIE.getShapeAsDims(data, dataDims);
 
-          // compute the loop indices for the output
-          SmallVector<IndexExpr, 4> outputAccessFct;
-          getIndexExprList<DimIndexExpr>(loopInd, outputAccessFct);
+      /*
+        The pattern that we are using is that of numpy.take.
 
-          // Compute access function for indices[jjs].
-          SmallVector<IndexExpr, 4> indicesAccessFct;
-          for (int j = 0; j < indicesRank; ++j)
-            indicesAccessFct.emplace_back(outputAccessFct[jIndexStart + j]);
-          Value indexVal = createKrnl.loadIE(indices, indicesAccessFct);
-          // Loaded value is an index that is not affine
-          IndexExpr index = NonAffineIndexExpr(indexVal);
-          // When index may be negative, add axis Dim to it.
-          if (indicesMayBeNegative)
-            index = index.selectOrSelf(index < zeroIE, index + axisDim);
+        Ni, Nk = data.shape[:axis], data.shape[axis+1:]
+        Nj = indices.shape
+        for ii in ndindex(Ni):
+          for jj in ndindex(Nj):
+            for kk in ndindex(Nk):
+              out[ii + jj + kk] = data[ii + (indices[jj],) + kk]
 
-          // Compute access function of data: data[ii + (indices[jj],) + kk]
-          SmallVector<IndexExpr, 4> dataAccessFct;
-          // First add indices iis
-          for (int i = 0; i < axisLit; ++i)
-            dataAccessFct.emplace_back(outputAccessFct[iIndexStart + i]);
-          // Then add indices[jj] (indexVal).
-          dataAccessFct.emplace_back(index);
-          // Then add kks.
-          for (int k = axisLit + 1; k < dataRank; ++k)
-            dataAccessFct.emplace_back(outputAccessFct[kIndexStart + k]);
-          Value dataVal = createKrnl.loadIE(data, dataAccessFct);
+      // Define loops and iteration trip counts (equivalent to size of output)
+      // */
+      ValueRange loopDef = create.krnl.defineLoops(outputRank);
+      DimsExpr lbs(outputRank, zeroIE);
+      create.krnl.iterateIE(loopDef, loopDef, lbs, shapeHelper.getOutputDims(),
+          [&](KrnlBuilder &createKrnl, ValueRange loopInd) {
+            // Insert code inside the loop.
+            IndexExprScope innerLoopScope(createKrnl);
+            SymbolIndexExpr axisDim(dataDims[axisLit]);
 
-          // Save data into output
-          createKrnl.storeIE(dataVal, alloc, outputAccessFct);
-        });
-    rewriter.replaceOp(op, alloc);
-    onnxToKrnlSimdReport(op);
+            // Save data into output
+            createKrnl.storeIE(dataVal, alloc, outputAccessFct);
+          });
+      rewriter.replaceOp(op, alloc);
+      onnxToKrnlSimdReport(op);
+    }
     return success();
-  }
-};
+  };
 
-void populateLoweringONNXGatherOpPattern(RewritePatternSet &patterns,
-    TypeConverter &typeConverter, MLIRContext *ctx) {
-  patterns.insert<ONNXGatherOpLowering>(typeConverter, ctx);
-}
+  void populateLoweringONNXGatherOpPattern(RewritePatternSet &patterns,
+      TypeConverter &typeConverter, MLIRContext *ctx, bool zkMl) {
+    patterns.insert<ONNXGatherOpLowering>(typeConverter, ctx, zkMl);
+  }
 
 } // namespace onnx_mlir

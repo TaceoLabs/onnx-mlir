@@ -28,5 +28,5 @@ void addKrnlToLLVMPasses(
 InputIRLevelType determineInputIRLevel(
     mlir::OwningOpRef<mlir::ModuleOp> &module);
 void addPasses(mlir::OwningOpRef<mlir::ModuleOp> &module, mlir::PassManager &pm,
-    EmissionTargetType emissionTarget, std::string outputNameNoExt);
+    EmissionTargetType emissionTarget, std::string outputNameNoExt, bool zkMl=false);
 } // namespace onnx_mlir

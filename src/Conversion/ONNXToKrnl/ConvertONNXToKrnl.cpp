@@ -181,7 +181,7 @@ std::map<std::string, std::string> ONNXEntryPointLowering::typeMap = {
 
 void populateONNXToKrnlConversionPattern(RewritePatternSet &patterns,
     TypeConverter &typeConverter, MLIRContext *ctx, DimAnalysis *dimAnalysis,
-    bool enableTiling, bool enableSIMD, bool enableParallel) {
+    bool enableTiling, bool enableSIMD, bool enableParallel, bool zkMl) {
   // clang-format off
   // Type conversion for function signatures.
   // Call MLIR FuncOp signature conversion when result type is a ranked tensor.
@@ -223,7 +223,7 @@ void populateONNXToKrnlConversionPattern(RewritePatternSet &patterns,
   populateLoweringONNXUnsqueezeOpPattern(patterns, typeConverter, ctx);
   populateLoweringONNXUnsqueezeV11OpPattern(patterns, typeConverter, ctx);
   populateLoweringONNXTransposeOpPattern(patterns, typeConverter, ctx, enableParallel);
-  populateLoweringONNXGatherOpPattern(patterns, typeConverter, ctx);
+  populateLoweringONNXGatherOpPattern(patterns, typeConverter, ctx, zkMl);
   populateLoweringONNXGatherElementsOpPattern(patterns, typeConverter, ctx);
   populateLoweringONNXGatherNDOpPattern(patterns, typeConverter, ctx);
   populateLoweringONNXIdentityOpPattern(patterns, typeConverter, ctx);
@@ -298,17 +298,19 @@ struct FrontendToKrnlLoweringPass
   FrontendToKrnlLoweringPass(const FrontendToKrnlLoweringPass &pass)
       : PassWrapper<FrontendToKrnlLoweringPass, OperationPass<ModuleOp>>() {}
   FrontendToKrnlLoweringPass(
-      bool enableTiling, bool enableSIMD, bool enableParallel) {
+      bool enableTiling, bool enableSIMD, bool enableParallel, zkMl) {
     // Below, need explicit assignment to enable implicit conversion of bool to
     // Option<bool>.
     this->enableTiling = enableTiling;
     this->enableSIMD = enableSIMD;
     this->enableParallel = enableParallel;
+    this->zkMl = zkMl;
   }
 
   void runOnOperation() final;
 
 public:
+  bool zkMl;
   // Some ops (RNN ops for example) are lowered to other ONNX ops such as
   // ONNXMatMulOp, ONNXSplitOp, ONNXTransposeOp, etc. These ONNX ops are then
   // lowered into krnl ops in this pass.
@@ -429,7 +431,7 @@ void FrontendToKrnlLoweringPass::runOnOperation() {
 
   // Define patterns.
   populateONNXToKrnlConversionPattern(patterns, krnlTypeConverter,
-      &getContext(), dimAnalysis, enableTiling, enableSIMD, enableParallel);
+      &getContext(), dimAnalysis, enableTiling, enableSIMD, enableParallel, zkMl);
 
   // Rewrite patterns for accelerators.
   for (auto *accel : onnx_mlir::accel::Accelerator::getAccelerators())
@@ -450,10 +452,9 @@ std::unique_ptr<Pass> createLowerToKrnlPass() {
 }
 
 std::unique_ptr<Pass> createLowerToKrnlPass(
-    bool enableTiling, bool enableSIMD, bool enableParallel) {
+    bool enableTiling, bool enableSIMD, bool enableParallel, zkMl=false) {
   return std::make_unique<FrontendToKrnlLoweringPass>(
-      enableTiling, enableSIMD, enableParallel);
-}
+      enableTiling, enableSIMD, enableParallel, zkMl);
 
 //===----------------------------------------------------------------------===//
 // Support functions for reporting.

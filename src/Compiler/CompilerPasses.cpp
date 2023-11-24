@@ -144,7 +144,7 @@ void addONNXToMLIRPasses(mlir::PassManager &pm, bool targetCPU) {
 }
 
 void addONNXToKrnlPasses(mlir::PassManager &pm, int optLevel, bool enableCSE,
-    bool enableInstrumentONNXSignature, std::string ONNXOpsStatFormat) {
+    bool enableInstrumentONNXSignature, std::string ONNXOpsStatFormat, bool zkMl) {
   if (enableCSE)
     // Eliminate common sub-expressions before lowering to Krnl.
     // TODO: enable this by default when we make sure it works flawlessly.
@@ -175,7 +175,7 @@ void addONNXToKrnlPasses(mlir::PassManager &pm, int optLevel, bool enableCSE,
         onnx_mlir::createInstrumentONNXSignaturePass());
   pm.addPass(onnx_mlir::createLowerToKrnlPass(/*enableTiling*/ optLevel >= 3,
       /*enableSIMD*/ optLevel >= 3 && !disableSimdOption,
-      /*enableParallel*/ enableParallel));
+      /*enableParallel*/ enableParallel, zkMl));
   // An additional pass of canonicalization is helpful because lowering
   // from ONNX dialect to Standard dialect exposes additional canonicalization
   // opportunities.
@@ -265,7 +265,7 @@ InputIRLevelType determineInputIRLevel(mlir::OwningOpRef<ModuleOp> &module) {
 }
 
 void addPasses(mlir::OwningOpRef<ModuleOp> &module, mlir::PassManager &pm,
-    EmissionTargetType emissionTarget, std::string outputNameNoExt) {
+    EmissionTargetType emissionTarget, std::string outputNameNoExt, bool zkMl) {
   InputIRLevelType inputIRLevel = determineInputIRLevel(module);
 
   if (inputIRLevel <= ONNXLevel && emissionTarget >= EmitONNXIR)
@@ -274,7 +274,7 @@ void addPasses(mlir::OwningOpRef<ModuleOp> &module, mlir::PassManager &pm,
   if (emissionTarget >= EmitMLIR) {
     if (inputIRLevel <= ONNXLevel)
       addONNXToKrnlPasses(pm, OptimizationLevel, /*enableCSE*/ true,
-          instrumentONNXSignature, ONNXOpStats);
+          instrumentONNXSignature, ONNXOpStats, zkMl);
     if (inputIRLevel <= MLIRLevel)
       addKrnlToAffinePasses(pm);
   }

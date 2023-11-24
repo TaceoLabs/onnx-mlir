@@ -84,4 +84,5 @@ add_onnx_mlir_library(OMONNXToKrnl
   OMSupport
   MLIRFuncDialect
   MLIRFuncTransforms
+  MLIRZkMlDialect
   )
