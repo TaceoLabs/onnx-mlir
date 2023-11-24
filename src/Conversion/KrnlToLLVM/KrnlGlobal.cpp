@@ -189,12 +189,16 @@ private:
           /*isConstant=*/true, LLVM::Linkage::Internal, krnlGlobalOp.getName(),
           llvmStringAttr);
     } else {
-      if (denseAttr.getElementType().isa<StringType>())
+      if (denseAttr.getElementType().isa<StringType>()) {
+      llvm::outs() << "I will now lower that stupid STRING array???\n";
         global = lowerStringLiteral(krnlGlobalOp, globalType, rewriter);
-      else
+      }
+      else  {
+
         global = create.llvm.globalOp(globalType,
             /*isConstant=*/true, LLVM::Linkage::Internal,
             krnlGlobalOp.getName(), krnlGlobalOp.getValue().value());
+      }
     }
 
     LLVM_DEBUG(llvm::dbgs() << "global: " << global << "\n";);
