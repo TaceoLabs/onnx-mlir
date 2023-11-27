@@ -19,7 +19,7 @@
 #include "src/Dialect/ONNX/ONNXOps/ShapeHelper.hpp"
 
 using namespace mlir;
-using ZKMLGatherOp = zk_ml_toolchain::zkml::GatherOp;
+using ZKMLGatherOp = mlir::zkml::GatherOp;
 
 namespace onnx_mlir {
 

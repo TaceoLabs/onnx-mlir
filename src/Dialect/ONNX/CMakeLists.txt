@@ -103,6 +103,7 @@ add_onnx_mlir_library(OMONNXOps
   ONNXOps/Tensor/Upsample.cpp
   
   DEPENDS
+  MLIRZkMlDialect
   OMHasOnnxSubgraphOpInterfaceIncGen
   OMONNXIncGen
   OMONNXRewriteIncGen
@@ -121,6 +122,10 @@ add_onnx_mlir_library(OMONNXOps
   MLIRFuncDialect
   MLIRMemRefTransforms
   )
+
+
+target_include_directories(OMONNXOps PUBLIC ${CMAKE_SOURCE_DIR}/libs/zk-ml-dialect/include)
+target_include_directories(OMONNXOps PUBLIC ${CMAKE_BINARY_DIR}/libs/zk-ml-dialect/tablegen)
 
 configure_file(ONNXOps.td.inc.dc.in
   ${CMAKE_CURRENT_BINARY_DIR}/ONNXOps.td.inc.dc

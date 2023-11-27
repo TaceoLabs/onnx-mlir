@@ -452,7 +452,7 @@ std::unique_ptr<Pass> createLowerToKrnlPass() {
 }
 
 std::unique_ptr<Pass> createLowerToKrnlPass(
-    bool enableTiling, bool enableSIMD, bool enableParallel, zkMl=false) {
+    bool enableTiling, bool enableSIMD, bool enableParallel, bool zkMl=false) {
   return std::make_unique<FrontendToKrnlLoweringPass>(
       enableTiling, enableSIMD, enableParallel, zkMl);
 
