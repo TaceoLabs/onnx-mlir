@@ -312,7 +312,7 @@ void populateLoweringONNXLRNOpPattern(
     mlir::RewritePatternSet &, mlir::TypeConverter &, mlir::MLIRContext *);
 void populateLoweringONNXMatMulOpPattern(mlir::RewritePatternSet &,
     mlir::TypeConverter &, mlir::MLIRContext *, DimAnalysis *,
-    bool enableTiling, bool enableSIMD, bool enableParallel);
+    bool enableTiling, bool enableSIMD, bool enableParallel, bool zkMl);
 void populateLoweringONNXMatMulIntegerOpPattern(
     mlir::RewritePatternSet &, mlir::TypeConverter &, mlir::MLIRContext *);
 void populateLoweringONNXRandomNormalOpPattern(
@@ -382,8 +382,8 @@ void populateLoweringONNXUnsqueezeV11OpPattern(
     mlir::RewritePatternSet &, mlir::TypeConverter &, mlir::MLIRContext *);
 void populateLoweringONNXTransposeOpPattern(mlir::RewritePatternSet &,
     mlir::TypeConverter &, mlir::MLIRContext *, bool enableParallel);
-void populateLoweringONNXGatherOpPattern(
-    mlir::RewritePatternSet &, mlir::TypeConverter &, mlir::MLIRContext *, bool zkMl);
+void populateLoweringONNXGatherOpPattern(mlir::RewritePatternSet &,
+    mlir::TypeConverter &, mlir::MLIRContext *, bool zkMl);
 void populateLoweringONNXGatherElementsOpPattern(
     mlir::RewritePatternSet &, mlir::TypeConverter &, mlir::MLIRContext *);
 void populateLoweringONNXGatherNDOpPattern(

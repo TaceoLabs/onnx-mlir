@@ -203,7 +203,7 @@ void populateONNXToKrnlConversionPattern(RewritePatternSet &patterns,
   populateLoweringONNXSoftmaxOpPattern(patterns, typeConverter, ctx, enableParallel);
   populateLoweringONNXTopKOpPattern(patterns, typeConverter, ctx);
   populateLoweringONNXTriluOpPattern(patterns, typeConverter, ctx);
-  populateLoweringONNXMatMulOpPattern(patterns, typeConverter, ctx, dimAnalysis, enableTiling, enableSIMD, enableParallel);
+  populateLoweringONNXMatMulOpPattern(patterns, typeConverter, ctx, dimAnalysis, enableTiling, enableSIMD, enableParallel, zkMl);
   populateLoweringONNXMatMulIntegerOpPattern(patterns, typeConverter, ctx);
   populateLoweringONNXRandomNormalOpPattern(patterns, typeConverter, ctx);
   populateLoweringONNXRandomNormalLikeOpPattern(patterns, typeConverter, ctx);

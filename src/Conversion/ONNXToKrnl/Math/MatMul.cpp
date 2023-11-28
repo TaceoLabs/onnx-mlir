@@ -13,7 +13,11 @@
 //===----------------------------------------------------------------------===//
 
 #include "llvm/Support/Debug.h"
+#include <functional>
 
+#include "mlir/Dialect/zkml/IR/DotProduct.h"
+#include "mlir/Dialect/zkml/ZkMlDialect.h"
+#include "mlir/IR/ValueRange.h"
 #include "src/Conversion/ONNXToKrnl/ONNXToKrnlCommon.hpp"
 #include "src/Dialect/Krnl/DialectBuilder.hpp"
 #include "src/Dialect/Krnl/KrnlHelper.hpp"
@@ -25,20 +29,22 @@
 static constexpr int32_t DISABLE_MAT_VEC_PRODUCT = 0;
 
 using namespace mlir;
+using ZKMLDotProductOp = mlir::zkml::DotProductOp;
 
 namespace onnx_mlir {
 
 struct ONNXMatMulOpLowering : public OpConversionPattern<ONNXMatMulOp> {
   ONNXMatMulOpLowering(TypeConverter &typeConverter, MLIRContext *ctx,
       DimAnalysis *dimAnalysis, bool enableTiling, bool enableSIMD,
-      bool enableParallel)
+      bool enableParallel, bool zkMl)
       : OpConversionPattern(typeConverter, ctx), dimAnalysis(dimAnalysis),
         enableTiling(enableTiling), enableSIMD(enableSIMD),
-        enableParallel(enableParallel) {}
+        enableParallel(enableParallel), zkMl(zkMl) {}
   DimAnalysis *dimAnalysis;
   bool enableTiling;
   bool enableSIMD;
   bool enableParallel;
+  bool zkMl;
 
   // Handle the generic cases, including when there are broadcasts.
   void replaceGenericMatmul(Operation *op, ONNXMatMulOpAdaptor &operandAdaptor,
@@ -430,6 +436,89 @@ struct ONNXMatMulOpLowering : public OpConversionPattern<ONNXMatMulOp> {
         });
   }
 
+  void replaceZkMlMatMul(ONNXMatMulOp &matMulOp,
+      ONNXMatMulOpAdaptor &operandAdaptor, Type elementType,
+      ONNXMatMulOpShapeHelper &shapeHelper, Value alloc,
+      ConversionPatternRewriter &rewriter, Location loc) const {
+    MultiDialectBuilder<KrnlBuilder, MemRefBuilder> create(rewriter, loc);
+    int outerLoopNum = shapeHelper.getOutputDims().size();
+    int totLoopNum = outerLoopNum + 1; // Add reduction inner loop.
+    ValueRange loopDef = create.krnl.defineLoops(totLoopNum);
+    SmallVector<IndexExpr, 4> loopLbs(totLoopNum, LiteralIndexExpr(0));
+    SmallVector<IndexExpr, 4> loopUbs; // All getOutputDimss, plus reduction.
+    SmallVector<Value, 4> outerLoops;  // All but the last loop def.
+    for (int i = 0; i < outerLoopNum; ++i) {
+      loopUbs.emplace_back(shapeHelper.getOutputDims()[i]);
+      outerLoops.emplace_back(loopDef[i]);
+    }
+    int aRank = shapeHelper.aDims.size();
+    int bRank = aRank; // Add for better readability.
+    IndexExpr innerUb = shapeHelper.aDims[aRank - 1];
+    loopUbs.emplace_back(innerUb);
+    SmallVector<Value, 1> innerLoop{loopDef[totLoopNum - 1]}; // Last loop def.
+    // Single scalar, no need for default alignment.
+
+    int DotShape = alloc.getType().cast<MemRefType>().getShape().back();
+    Value lhs =
+        create.mem.alignedAlloca(MemRefType::get({DotShape}, elementType));
+    Value rhs =
+        create.mem.alignedAlloca(MemRefType::get({DotShape}, elementType));
+
+    // Non-reduction loop iterations: output-rank.
+    create.krnl.iterateIE(loopDef, outerLoops, loopLbs, loopUbs,
+        [&](KrnlBuilder &createKrnl, ValueRange outerIndices) {
+          MultiDialectBuilder<KrnlBuilder, MemRefBuilder, MathBuilder> create(
+              createKrnl);
+          create.krnl.iterate({}, innerLoop, {}, {},
+              [&](KrnlBuilder &createKrnl, ValueRange innerIndex) {
+                Value k = innerIndex[0];
+                SmallVector<Value, 4> aAccessFct, bAccessFct;
+                for (int i = 0; i < aRank; ++i) {
+                  // Add index if dim is not a padded dimension.
+                  if (!shapeHelper.aPadDims[i]) {
+                    // For A, reduction index is last
+                    if (i == aRank - 1) {
+                      aAccessFct.emplace_back(k);
+                    } else {
+                      aAccessFct.emplace_back(outerIndices[i]);
+                    }
+                  }
+                  if (!shapeHelper.bPadDims[i]) {
+                    // For B, reduction index is second to last.
+                    if (i == bRank - 2) {
+                      bAccessFct.emplace_back(k);
+                    } else if (i == outerLoopNum) {
+                      // When the rank of A 1D, then the output lost one
+                      // dimension. E,g, (5) x (10, 5, 4) -> padded (1, 5) x
+                      // (10, 5, 4) = (10, 1, 4). But we drop the "1" so its
+                      // really (10, 4). When processing the last dim of the
+                      // reduction (i=2 here), we would normally access
+                      // output[2] but it does not exist, because we lost a dim
+                      // in the output due to 1D A.
+                      bAccessFct.emplace_back(outerIndices[i - 1]);
+                    } else {
+                      bAccessFct.emplace_back(outerIndices[i]);
+                    }
+                  }
+                }
+                // Add mat mul operation.
+                Value loadedA =
+                    create.krnl.load(operandAdaptor.getA(), aAccessFct);
+                Value loadedB =
+                    create.krnl.load(operandAdaptor.getB(), bAccessFct);
+
+                create.krnl.store(loadedA, lhs, innerIndex);
+                create.krnl.store(loadedB, rhs, innerIndex);
+              });
+          auto builder = OpBuilder(matMulOp);
+          builder.setInsertionPointToEnd(
+              create.krnl.getBuilder().getInsertionBlock());
+          mlir::Value DotProduct = builder.create<ZKMLDotProductOp>(
+              builder.getUnknownLoc(), elementType, lhs, rhs);
+          create.krnl.store(DotProduct, alloc, outerIndices);
+        });
+  }
+
   // Handle the cases with 2x2 matrices both for A, B, and C without
   // broadcast, broadcast of A to rank 2 B,  broadcast of B to rank 2 A, or
   // static, identical shaped broadcasting size A & B.
@@ -465,7 +554,10 @@ struct ONNXMatMulOpLowering : public OpConversionPattern<ONNXMatMulOp> {
     int aRank = A.getType().cast<MemRefType>().getShape().size();
     int bRank = B.getType().cast<MemRefType>().getShape().size();
     int cRank = alloc.getType().cast<MemRefType>().getShape().size();
-    if (enableTiling && aRank == 2 && bRank == 2) {
+    if (zkMl) {
+      replaceZkMlMatMul(matMulOp, operandAdaptor, elementType, shapeHelper,
+          alloc, rewriter, loc);
+    } else if (enableTiling && aRank == 2 && bRank == 2) {
       // Optimized Matmul only when 2D and allowed to tile and unroll.
       assert(cRank == 2 && "expected IxK * KxJ = IxJ 2D result");
       replace2x2Matmul2d(op, adaptor, elementType, shapeHelper, alloc, zero,
@@ -517,9 +609,9 @@ struct ONNXMatMulOpLowering : public OpConversionPattern<ONNXMatMulOp> {
 
 void populateLoweringONNXMatMulOpPattern(RewritePatternSet &patterns,
     TypeConverter &typeConverter, MLIRContext *ctx, DimAnalysis *dimAnalysis,
-    bool enableTiling, bool enableSIMD, bool enableParallel) {
+    bool enableTiling, bool enableSIMD, bool enableParallel, bool zkMl) {
   patterns.insert<ONNXMatMulOpLowering>(typeConverter, ctx, dimAnalysis,
-      enableTiling, enableSIMD, enableParallel);
+      enableTiling, enableSIMD, enableParallel, zkMl);
 }
 
 } // namespace onnx_mlir
