@@ -458,11 +458,14 @@ struct ONNXMatMulOpLowering : public OpConversionPattern<ONNXMatMulOp> {
     SmallVector<Value, 1> innerLoop{loopDef[totLoopNum - 1]}; // Last loop def.
     // Single scalar, no need for default alignment.
 
-    int DotShape = alloc.getType().cast<MemRefType>().getShape().back();
-    Value lhs =
-        create.mem.alignedAlloca(MemRefType::get({DotShape}, elementType));
-    Value rhs =
-        create.mem.alignedAlloca(MemRefType::get({DotShape}, elementType));
+    unsigned DotShape =
+        matMulOp.getA().getType().cast<TensorType>().getShape().back();
+    assert(
+        DotShape ==
+            matMulOp.getB().getType().cast<TensorType>().getShape().front() &&
+        "Dims must match for DotProduct");
+    Value lhs = create.mem.alloc(MemRefType::get({DotShape}, elementType));
+    Value rhs = create.mem.alloc(MemRefType::get({DotShape}, elementType));
 
     // Non-reduction loop iterations: output-rank.
     create.krnl.iterateIE(loopDef, outerLoops, loopLbs, loopUbs,
@@ -517,6 +520,8 @@ struct ONNXMatMulOpLowering : public OpConversionPattern<ONNXMatMulOp> {
               builder.getUnknownLoc(), elementType, lhs, rhs);
           create.krnl.store(DotProduct, alloc, outerIndices);
         });
+    create.mem.dealloc(lhs);
+    create.mem.dealloc(rhs);
   }
 
   // Handle the cases with 2x2 matrices both for A, B, and C without
