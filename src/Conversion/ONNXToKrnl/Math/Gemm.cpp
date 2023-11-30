@@ -14,7 +14,6 @@
 
 #include "llvm/Support/Debug.h"
 
-#include "mlir/Dialect/zkml/IR/DotProduct.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "src/Conversion/ONNXToKrnl/ONNXToKrnlCommon.hpp"
 #include "src/Dialect/Krnl/DialectBuilder.hpp"
@@ -27,7 +26,6 @@
 #define DEBUG_UNROLL_OFF 0
 #define DEBUG_OPTIMIZED_OFF 0
 
-using ZKMLDotProductOp = mlir::zkml::DotProductOp;
 static constexpr int BUFFER_ALIGN = 128;
 
 using namespace mlir;
@@ -155,7 +153,7 @@ struct ONNXGemmOpLowering : public OpConversionPattern<GemmOp> {
     // Outer loops.
     create.krnl.iterateIE(loopDef, outerLoopDef, loopLbs, loopUbs,
         [&](KrnlBuilder &createKrnl, ValueRange outerIndices) {
-          MultiDialectBuilder<KrnlBuilder, MathBuilder> create(createKrnl);
+          MultiDialectBuilder<KrnlBuilder, MathBuilder, ZkMlBuilder> create(createKrnl);
           // Inner loop.
           create.krnl.iterate({}, innerLoopDef, {}, {},
               [&](KrnlBuilder &createKrnl, ValueRange innerIndex) {
@@ -178,13 +176,14 @@ struct ONNXGemmOpLowering : public OpConversionPattern<GemmOp> {
                 create.krnl.store(aVal, lhs, innerIndex);
                 create.krnl.store(bVal, rhs, innerIndex);
               });
-          auto builder = OpBuilder(gemmOp);
-          builder.setInsertionPointToEnd(
-              create.krnl.getBuilder().getInsertionBlock());
-          mlir::Value DotProduct = builder.create<ZKMLDotProductOp>(
-              builder.getUnknownLoc(), elementType, lhs, rhs);
+          // auto builder = OpBuilder(gemmOp);
+          // builder.setInsertionPointToEnd(
+          //     create.krnl.getBuilder().getInsertionBlock());
+          // mlir::Value DotProduct = builder.create<ZKMLDotProductOp>(
+          //     builder.getUnknownLoc(), elementType, lhs, rhs);
           // create.krnl.store(DotProduct, alloc, outerIndices);
           // Handle alpha/beta coefficients.
+          Value DotProduct = create.zkml.DotProduct(lhs, rhs);
           Value res = create.math.mul(alphaVal, DotProduct);
           if (shapeHelper.hasBias) {
             SmallVector<Value, 2> cAccess;

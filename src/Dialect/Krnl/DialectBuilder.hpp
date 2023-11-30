@@ -14,11 +14,31 @@
 
 #pragma once
 
+#include "mlir/IR/Types.h"
+#include "mlir/IR/Value.h"
 #include "src/Dialect/Krnl/KrnlOps.hpp"
 #include "src/Dialect/Mlir/DialectBuilder.hpp"
 #include "src/Dialect/Mlir/IndexExprBuilder.hpp"
+#include "mlir/Dialect/zkml/IR/DotProduct.h"
+#include <cstddef>
+#include <cstdint>
 
 namespace onnx_mlir {
+
+//====-------------------- Support for ZkMl Builder ----------------------===//
+
+struct ZkMlBuilder : public DialectBuilder {
+  ZkMlBuilder(mlir::Location loc) : DialectBuilder(loc) {}
+  ZkMlBuilder(mlir::OpBuilder &b, mlir::Location loc)
+      : DialectBuilder(b, loc) {}
+  ZkMlBuilder(const DialectBuilder &db) : DialectBuilder(db) {}
+  virtual ~ZkMlBuilder() {}
+
+  mlir::Value DotProduct(mlir::Value lhs, mlir::Value rhs) const; 
+  mlir::Value Gather(mlir::Type MemRefType, mlir::Value data, mlir::Value indices, int64_t axis) const; 
+  mlir::Value ConstantIndex(int64_t cst) const;
+  mlir::Value AddIndex(mlir::Value lhs, mlir::Value rhs) const;
+};
 
 //====-------------------- Support for Krnl Builder ----------------------===//
 
@@ -190,6 +210,16 @@ protected:
 // =============================================================================
 // MultiDialectBuilder for Krnl
 // =============================================================================
+
+// Recursive class specialized for ZkMlBuilder referred to as zkml.
+template <class... Ts>
+struct MultiDialectBuilder<ZkMlBuilder, Ts...> : MultiDialectBuilder<Ts...> {
+  MultiDialectBuilder(mlir::OpBuilder &b, mlir::Location loc)
+      : MultiDialectBuilder<Ts...>(b, loc), zkml(b, loc) {}
+  MultiDialectBuilder(const DialectBuilder &db)
+      : MultiDialectBuilder<Ts...>(db), zkml(db) {}
+  ZkMlBuilder zkml;
+};
 
 // Recursive class specialized for AffineBuilderKrnlMem refereed to as
 // affineKMem.

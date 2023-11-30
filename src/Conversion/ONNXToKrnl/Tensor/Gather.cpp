@@ -16,10 +16,10 @@
 #include "mlir/Support/LogicalResult.h"
 #include "mlir/Dialect/zkml/IR/Gather.h"
 #include "src/Conversion/ONNXToKrnl/ONNXToKrnlCommon.hpp"
+#include "src/Dialect/Krnl/DialectBuilder.hpp"
 #include "src/Dialect/ONNX/ONNXOps/ShapeHelper.hpp"
 
 using namespace mlir;
-using ZKMLGatherOp = mlir::zkml::GatherOp;
 
 namespace onnx_mlir {
 
@@ -38,8 +38,12 @@ private:
     Location loc = ONNXLoc<ONNXGatherOp>(op);
     ValueRange operands = adaptor.getOperands();
 
-    MultiDialectBuilder<KrnlBuilder, IndexExprBuilderForKrnl, MemRefBuilder>
-        create(rewriter, loc);
+    MultiDialectBuilder<KrnlBuilder, IndexExprBuilderForKrnl, ZkMlBuilder> create(
+        rewriter, loc);
+    //old 
+   //ONNXGatherOpAdaptor operandAdaptor(operands);
+   //ONNXGatherOp gatherOp = cast<ONNXGatherOp>(op);
+   //Location loc = op->getLoc();
 
     // Get shape.
     ONNXGatherOpShapeHelper shapeHelper(op, operands, &create.krnlIE);
@@ -63,10 +67,7 @@ private:
     int64_t indicesRank = indices.getType().cast<MemRefType>().getRank();
 
     if (this->zkMl) {
-      OpBuilder builder(op);
-      auto NewGatherOp = builder.create<ZKMLGatherOp>(
-          op->getLoc(), outputMemRefType, data, indices, gatherOp.getAxis());
-      rewriter.replaceOp(op, NewGatherOp->getResult(0));
+      rewriter.replaceOp(op, create.zkml.Gather(outputMemRefType, data, indices, gatherOp.getAxis()));
     } else {
       // Insert an allocation and deallocation for the output of this operation.
       Value alloc = insertAllocAndDeallocSimple(

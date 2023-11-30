@@ -30,4 +30,6 @@ add_onnx_mlir_library(OMKrnlOps
   MLIRMemRefDialect
   MLIRSCFDialect
   MLIRShapeDialect
+  MLIRZkMlDialect
+  MLIRIndexDialect
   )
