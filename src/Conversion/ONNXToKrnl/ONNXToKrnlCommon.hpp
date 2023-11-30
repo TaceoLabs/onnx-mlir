@@ -305,7 +305,7 @@ void populateLoweringONNXElementwiseOpPattern(mlir::RewritePatternSet &,
     bool enableParallel);
 void populateLoweringONNXGemmOpPattern(mlir::RewritePatternSet &,
     mlir::TypeConverter &, mlir::MLIRContext *, bool enableTiling,
-    bool enableSIMD, bool enableParallel);
+    bool enableSIMD, bool enableParallel, bool zkMl);
 void populateLoweringONNXHardmaxOpPattern(
     mlir::RewritePatternSet &, mlir::TypeConverter &, mlir::MLIRContext *);
 void populateLoweringONNXLRNOpPattern(
@@ -335,7 +335,7 @@ void populateLoweringONNXCategoryMapperOpPattern(
 
 // `NN` directory methods:
 void populateLoweringONNXConvOpPattern(mlir::RewritePatternSet &,
-    mlir::TypeConverter &, mlir::MLIRContext *, bool enableTiling);
+    mlir::TypeConverter &, mlir::MLIRContext *, bool enableTiling, bool zkMl);
 void populateLoweringONNXNormalizationOpPattern(
     mlir::RewritePatternSet &, mlir::TypeConverter &, mlir::MLIRContext *);
 void populateLoweringONNXPoolingOpPattern(

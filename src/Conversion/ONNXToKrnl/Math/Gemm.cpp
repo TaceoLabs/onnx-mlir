@@ -14,6 +14,8 @@
 
 #include "llvm/Support/Debug.h"
 
+#include "mlir/Dialect/zkml/IR/DotProduct.h"
+#include "mlir/IR/BuiltinTypes.h"
 #include "src/Conversion/ONNXToKrnl/ONNXToKrnlCommon.hpp"
 #include "src/Dialect/Krnl/DialectBuilder.hpp"
 #include "src/Dialect/Krnl/KrnlHelper.hpp"
@@ -25,6 +27,7 @@
 #define DEBUG_UNROLL_OFF 0
 #define DEBUG_OPTIMIZED_OFF 0
 
+using ZKMLDotProductOp = mlir::zkml::DotProductOp;
 static constexpr int BUFFER_ALIGN = 128;
 
 using namespace mlir;
@@ -34,15 +37,16 @@ namespace onnx_mlir {
 template <typename GemmOp>
 struct ONNXGemmOpLowering : public OpConversionPattern<GemmOp> {
   ONNXGemmOpLowering(TypeConverter &typeConverter, MLIRContext *ctx,
-      bool enableTiling, bool enableSIMD, bool enableParallel)
+      bool enableTiling, bool enableSIMD, bool enableParallel, bool zkMl)
       : OpConversionPattern<GemmOp>(typeConverter, ctx),
         enableTiling(enableTiling), enableSIMD(enableSIMD),
-        enableParallel(enableParallel) {}
+        enableParallel(enableParallel), zkMl(zkMl) {}
 
   using OpAdaptor = typename GemmOp::Adaptor;
   bool enableTiling;
   bool enableSIMD;
   bool enableParallel;
+  bool zkMl;
 
   void genericGemm(Operation *op, ONNXGemmOpAdaptor &adaptor, Type elementType,
       ONNXGemmOpShapeHelper &shapeHelper, Value alloc, Value zeroVal,
@@ -50,7 +54,6 @@ struct ONNXGemmOpLowering : public OpConversionPattern<GemmOp> {
       Location loc, bool enableParallel) const {
     onnxToKrnlSimdReport(op, /*successful*/ false, /*vl*/ 0, /*trip count*/ 0,
         "no simd because tiling is disabled");
-
     // R is result (alloc).
     Value A(adaptor.getA()), B(adaptor.getB()), R(alloc);
 
@@ -118,6 +121,87 @@ struct ONNXGemmOpLowering : public OpConversionPattern<GemmOp> {
           }
           create.krnl.store(res, R, outerIndices);
         });
+  }
+
+  void replaceZkMlGemm(ONNXGemmOp &gemmOp, ONNXGemmOpAdaptor &operandAdaptor,
+      Type elementType, ONNXGemmOpShapeHelper &shapeHelper, Value alloc,
+      Value zeroVal, Value alphaVal, Value betaVal,
+      ConversionPatternRewriter &rewriter, Location loc) const {
+    // R is result (alloc).
+    Value A(operandAdaptor.getA()), B(operandAdaptor.getB()), R(alloc);
+
+    // Create all the loops at once (outer loops followed by inner loop).
+    MultiDialectBuilder<KrnlBuilder, MemRefBuilder, MathBuilder> create(
+        rewriter, loc);
+    ValueRange loopDef = create.krnl.defineLoops(3);
+    SmallVector<Value, 2> outerLoopDef{loopDef[0], loopDef[1]};
+    SmallVector<Value, 1> innerLoopDef{loopDef[2]};
+    SmallVector<IndexExpr, 3> loopLbs(3, LiteralIndexExpr(0));
+    IndexExpr outerUb0 = shapeHelper.getOutputDims()[0];
+    IndexExpr outerUb1 = shapeHelper.getOutputDims()[1];
+    IndexExpr innerUb = shapeHelper.aDims[1];
+    SmallVector<IndexExpr, 3> loopUbs{outerUb0, outerUb1, innerUb};
+    // Create temp, single scalar, no need for default alignment.
+    mlir::TensorType TypeA = gemmOp.getA().getType().cast<TensorType>();
+    mlir::TensorType TypeB = gemmOp.getB().getType().cast<TensorType>();
+    unsigned DotShape =
+        gemmOp.getTransA() ? TypeA.getShape().front() : TypeA.getShape().back();
+    assert(DotShape == gemmOp.getTransB()
+               ? TypeB.getShape().back()
+               : TypeB.getShape().front() &&
+                     "Dims must match for DotProduct after transpose");
+    Value lhs = create.mem.alloc(MemRefType::get({DotShape}, elementType));
+    Value rhs = create.mem.alloc(MemRefType::get({DotShape}, elementType));
+    // Outer loops.
+    create.krnl.iterateIE(loopDef, outerLoopDef, loopLbs, loopUbs,
+        [&](KrnlBuilder &createKrnl, ValueRange outerIndices) {
+          MultiDialectBuilder<KrnlBuilder, MathBuilder> create(createKrnl);
+          // Inner loop.
+          create.krnl.iterate({}, innerLoopDef, {}, {},
+              [&](KrnlBuilder &createKrnl, ValueRange innerIndex) {
+                Value i(outerIndices[0]), j(outerIndices[1]), k(innerIndex[0]);
+                MultiDialectBuilder<KrnlBuilder, MathBuilder> create(
+                    createKrnl);
+                // Handle transposed accesses.
+                SmallVector<Value, 2> aAccess, bAccess;
+                if (gemmOp.getTransA() != 0)
+                  aAccess = {k, i};
+                else
+                  aAccess = {i, k};
+                if (gemmOp.getTransB() != 0)
+                  bAccess = {j, k};
+                else
+                  bAccess = {k, j};
+                // Perform the reduction by adding a*b to reduction.
+                Value aVal = create.krnl.load(A, aAccess);
+                Value bVal = create.krnl.load(B, bAccess);
+                create.krnl.store(aVal, lhs, innerIndex);
+                create.krnl.store(bVal, rhs, innerIndex);
+              });
+          auto builder = OpBuilder(gemmOp);
+          builder.setInsertionPointToEnd(
+              create.krnl.getBuilder().getInsertionBlock());
+          mlir::Value DotProduct = builder.create<ZKMLDotProductOp>(
+              builder.getUnknownLoc(), elementType, lhs, rhs);
+          // create.krnl.store(DotProduct, alloc, outerIndices);
+          // Handle alpha/beta coefficients.
+          Value res = create.math.mul(alphaVal, DotProduct);
+          if (shapeHelper.hasBias) {
+            SmallVector<Value, 2> cAccess;
+            for (int x = 2 - shapeHelper.cRank; x < 2; ++x) {
+              // If dim > 1, use loop index, otherwise broadcast on 0's element.
+              DimIndexExpr dim(shapeHelper.cDims[x]);
+              cAccess.emplace_back(
+                  IndexExpr::select(dim > 1, DimIndexExpr(outerIndices[x]), 0)
+                      .getValue());
+            }
+            Value c = create.krnl.load(operandAdaptor.getC(), cAccess);
+            res = create.math.add(res, create.math.mul(betaVal, c));
+          }
+          create.krnl.store(res, R, outerIndices);
+        });
+    create.mem.dealloc(lhs);
+    create.mem.dealloc(rhs);
   }
 
   void tiledTransposedGemm(Operation *op, ONNXGemmOpAdaptor &adaptor,
@@ -408,8 +492,10 @@ struct ONNXGemmOpLowering : public OpConversionPattern<GemmOp> {
                      << ", beta " << betaLit << "\n";
       }
     });
-
-    if (enableTiling && !DEBUG_OPTIMIZED_OFF) {
+    if (zkMl) {
+      replaceZkMlGemm(gemmOp, operandAdaptor, elementType, shapeHelper, alloc,
+          zero, alpha, beta, rewriter, loc);
+    } else if (enableTiling && !DEBUG_OPTIMIZED_OFF) {
       tiledTransposedGemm(op, adaptor, elementType, shapeHelper, alloc, zero,
           alpha, beta, rewriter, loc, enableParallel);
     } else {
@@ -423,9 +509,9 @@ struct ONNXGemmOpLowering : public OpConversionPattern<GemmOp> {
 
 void populateLoweringONNXGemmOpPattern(RewritePatternSet &patterns,
     TypeConverter &typeConverter, MLIRContext *ctx, bool enableTiling,
-    bool enableSIMD, bool enableParallel) {
+    bool enableSIMD, bool enableParallel, bool zkMl) {
   patterns.insert<ONNXGemmOpLowering<ONNXGemmOp>>(
-      typeConverter, ctx, enableTiling, enableSIMD, enableParallel);
+      typeConverter, ctx, enableTiling, enableSIMD, enableParallel, zkMl);
 }
 
 } // namespace onnx_mlir

@@ -12,19 +12,32 @@
 //
 //===----------------------------------------------------------------------===//
 
+// #include "src/Compiler/CompilerOptions.hpp"
+//TODO check imports
+#include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Index/IR/IndexDialect.h"
+#include "mlir/Dialect/Index/IR/IndexOps.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/Dialect/zkml/IR/DotProduct.h"
+#include "mlir/IR/AffineMap.h"
+#include "mlir/IR/BuiltinTypes.h"
+
 #include "src/Conversion/ONNXToKrnl/ONNXToKrnlCommon.hpp"
+#include "src/Dialect/Krnl/KrnlOps.hpp"
 #include "src/Dialect/ONNX/ONNXOps/ShapeHelper.hpp"
 
+using ZKMLDotProductOp = mlir::zkml::DotProductOp;
 using namespace mlir;
 
 namespace onnx_mlir {
 
 struct ONNXConvOpLowering : public OpConversionPattern<ONNXConvOp> {
   ONNXConvOpLowering(
-      TypeConverter &typeConverter, MLIRContext *ctx, bool enableParallel)
+      TypeConverter &typeConverter, MLIRContext *ctx, bool enableParallel, bool zkMl)
       : OpConversionPattern(typeConverter, ctx),
-        enableParallel(enableParallel) {}
+        enableParallel(enableParallel), zkMl(zkMl) {}
   bool enableParallel;
+  bool zkMl;
 
   void convUnoptimized(ConversionPatternRewriter &rewriter, ONNXConvOp &convOp,
       ONNXConvOpAdaptor &operandAdaptor, ONNXConvOpShapeHelper &shapeHelper,
@@ -42,7 +55,10 @@ struct ONNXConvOpLowering : public OpConversionPattern<ONNXConvOp> {
     bool hasBias = !biasOperand.getType().isa<NoneType>();
     int64_t groupNum = convOp.getGroup();
     IndexExpr G = LiteralIndexExpr(groupNum);
-    Value fZero = create.math.constant(memRefType.getElementType(), 0);
+    Type elementType = memRefType.getElementType();
+    Value fZero = create.math.constant(elementType, 0);
+    auto IndexZero = create.math.getBuilder().create<arith::ConstantIndexOp>(create.math.getBuilder().getUnknownLoc(), 0);
+    auto IndexOne =  create.math.getBuilder().create<arith::ConstantIndexOp>(create.math.getBuilder().getUnknownLoc(), 1);
 
     // Bounds for output sizes: [N x CO x HO x WO]:
     // where N is Batch Size,
@@ -85,7 +101,7 @@ struct ONNXConvOpLowering : public OpConversionPattern<ONNXConvOp> {
     //       co = g * COPerGroup + coPerGroup;
 
     // Create a local reduction value.
-    MemRefType tmpType = MemRefType::get({}, memRefType.getElementType());
+    MemRefType tmpType = MemRefType::get({}, elementType);
     // Single scalar, no need for default alignment.
     Value reductionVal = create.mem.alloca(tmpType);
     auto bodyFunction = [&](ValueRange outerIndices) {
@@ -114,7 +130,7 @@ struct ONNXConvOpLowering : public OpConversionPattern<ONNXConvOp> {
           [&](KrnlBuilder &createKrnl, ValueRange outputSpatialIndices) {
             IndexExprScope outputSpacialScope(createKrnl);
             MultiDialectBuilder<KrnlBuilder, IndexExprBuilderForKrnl,
-                MathBuilder>
+                MathBuilder, MemRefBuilder>
                 create(createKrnl);
             // Reset reduction value to zero.
             create.krnl.store(fZero, reductionVal);
@@ -152,6 +168,29 @@ struct ONNXConvOpLowering : public OpConversionPattern<ONNXConvOp> {
             // for ciPerGroup = 0 .. CIPerGroup:
             //   for kh in lb .. ub:
             //     for kw in lb .. ub:
+
+            // Value rhs =
+            // create.mem.alloc(MemRefType::get({mlir::ShapedType::kDynamic, 3},
+            // elementType), ValueRange(redLbs.front().getValue()));
+            // llvm::outs() << rhs  << "\n";
+            // UnrankedMemRefType memRefType =
+            // UnrankedMemRefType::get(elementType, 10);
+            assert(redLbs.size() == redUbs.size() &&
+                   "Upper bound must be same as Lower bound");
+            // TODO check for size
+            auto acc = redUbs.front() - redLbs.front();
+            for (unsigned i = 1; i < redLbs.size(); ++i) {
+              acc = acc + (redUbs[i] - redLbs[i]);
+            }
+            Value lhs = create.mem.alloc(
+                MemRefType::get({mlir::ShapedType::kDynamic}, elementType),
+                ValueRange(acc.getValue()));
+            Value rhs = create.mem.alloc(
+                MemRefType::get({mlir::ShapedType::kDynamic}, elementType),
+                ValueRange(acc.getValue()));
+            Value inductionMemRef =
+                create.mem.alloc(MemRefType::get({}, rewriter.getIndexType()));
+            create.krnl.store(IndexZero, inductionMemRef);
             create.krnl.iterateIE(redLoops, redLoops, redLbs, redUbs,
                 [&](KrnlBuilder &createKrnl, ValueRange redIndices) {
                   IndexExprScope redScope(createKrnl);
@@ -190,25 +229,42 @@ struct ONNXConvOpLowering : public OpConversionPattern<ONNXConvOp> {
                   }
                   Value filter =
                       create.krnl.loadIE(filterOperand, filterAccessFct);
-                  Value oldRed = create.krnl.load(reductionVal);
-                  Value mul = create.math.mul(image, filter);
-                  Value newRed = create.math.add(oldRed, mul);
-                  create.krnl.store(newRed, reductionVal);
+                  auto OldInduction = create.krnl.load(inductionMemRef);
+                  auto NewBuilder = OpBuilder(convOp);
+                  NewBuilder.setInsertionPointAfterValue(OldInduction);
+                  NewBuilder.create<memref::StoreOp>(NewBuilder.getUnknownLoc(), image, lhs, ValueRange(OldInduction));
+                  NewBuilder.create<memref::StoreOp>(NewBuilder.getUnknownLoc(), filter, rhs, ValueRange(OldInduction));
+                  Value NewInduction = NewBuilder.create<index::AddOp>(NewBuilder.getUnknownLoc(), ValueRange({OldInduction, IndexOne}));
+                  NewBuilder.create<memref::StoreOp>(NewBuilder.getUnknownLoc(), NewInduction, inductionMemRef);
+                  // create.krnl.store(NewInduction, inductionMemRef);
+
+                  // auto builder = OpBuilder(convOp);
+                  // builder.setInsertionPointToEnd(
+                  //     create.krnl.getBuilder().getInsertionBlock());
                 }); // Reduction loops.
                     // Finish the reduction and store in result array.
-            Value result = create.krnl.load(reductionVal);
+            // Value test = create.krnl.load(reductionVal);
+            auto NewBuilder = OpBuilder(convOp);
+            NewBuilder.setInsertionPointToEnd(create.krnl.getBuilder().getInsertionBlock());
+            Value result = NewBuilder.create<ZKMLDotProductOp>(NewBuilder.getUnknownLoc(), elementType, lhs, rhs);
             // Store the result. Optionally add bias.
             SymbolIndexExpr coInOutputSpacial(co);
             if (hasBias) {
-              Value bias = create.krnl.loadIE(biasOperand, {coInOutputSpacial});
-              result = create.math.add(result, bias);
+              SmallVector<Value, 4> indexValues;
+              IndexExpr::getValues(coInOutputSpacial, indexValues);
+              Value bias = NewBuilder.create<KrnlLoadOp>(NewBuilder.getUnknownLoc(), biasOperand, indexValues);
+              result = NewBuilder.create<arith::AddFOp>(NewBuilder.getUnknownLoc(), result, bias);
             }
             SmallVector<IndexExpr, 4> resAccessFunc;
             resAccessFunc.emplace_back(SymbolIndexExpr(outerIndices[0]));
             resAccessFunc.emplace_back(coInOutputSpacial);
             for (Value o : outputSpatialIndices)
               resAccessFunc.emplace_back(DimIndexExpr(o));
-            create.krnl.storeIE(result, alloc, resAccessFunc);
+            // create.krnl.storeIE(result, alloc, resAccessFunc);
+            SmallVector<Value, 4> indexValues;
+            IndexExpr::getValues(resAccessFunc, indexValues);
+            NewBuilder.create<KrnlStoreOp>(NewBuilder.getUnknownLoc(), result, alloc, indexValues);
+
           }); // Output spacial loops.
     };
 
@@ -258,8 +314,9 @@ struct ONNXConvOpLowering : public OpConversionPattern<ONNXConvOp> {
 };
 
 void populateLoweringONNXConvOpPattern(RewritePatternSet &patterns,
-    TypeConverter &typeConverter, MLIRContext *ctx, bool enableParallel) {
-  patterns.insert<ONNXConvOpLowering>(typeConverter, ctx, enableParallel);
+    TypeConverter &typeConverter, MLIRContext *ctx, bool enableParallel,
+    bool zkMl) {
+  patterns.insert<ONNXConvOpLowering>(typeConverter, ctx, enableParallel, zkMl);
 }
 
 } // namespace onnx_mlir
