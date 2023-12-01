@@ -17,8 +17,6 @@
 #include <cstdint>
 
 #include "mlir/IR/BuiltinTypes.h"
-#include "mlir/Dialect/Index/IR/IndexDialect.h"
-#include "mlir/Dialect/Index/IR/IndexOps.h"
 #include "src/Dialect/Krnl/DialectBuilder.hpp"
 #include "src/Dialect/ONNX/ONNXOps.hpp"
 #include "mlir/Dialect/zkml/IR/Gather.h"
@@ -66,15 +64,7 @@ static StringRef getFormat(const Type &inputType) {
     Type elementType = lhs.getType().cast<MemRefType>().getElementType();
     return b().create<zkml::DotProductOp>(loc(), elementType, lhs, rhs);
   }
-  Value ZkMlBuilder::ConstantIndex(int64_t cst) const {
-    return b().create<index::ConstantOp>(loc(), cst);
-  }
 
-  Value ZkMlBuilder::AddIndex(Value lhs, Value rhs) const {
-    assert(lhs.getType() == rhs.getType() && "values must be same type for index add");
-    assert(lhs.getType().isa<IndexType>() && "values must be index type for index add");
-    return b().create<index::AddOp>(loc(), lhs, rhs);
-  }
   Value ZkMlBuilder::Gather(Type MemRefType, Value data, Value indices, int64_t axis) const {
     return b().create<zkml::GatherOp>(loc(), MemRefType, data, indices, axis);
   }

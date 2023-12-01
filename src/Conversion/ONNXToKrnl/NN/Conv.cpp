@@ -15,8 +15,6 @@
 // #include "src/Compiler/CompilerOptions.hpp"
 // TODO check imports
 #include "mlir/Dialect/Arith/IR/Arith.h"
-#include "mlir/Dialect/Index/IR/IndexDialect.h"
-#include "mlir/Dialect/Index/IR/IndexOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/IR/AffineMap.h"
 #include "mlir/IR/BuiltinTypes.h"
@@ -292,8 +290,6 @@ struct ONNXConvOpLowering : public OpConversionPattern<ONNXConvOp> {
     ValueRange parLbs(lbsStorage);
     ValueRange steps(stepsStorage);
     ValueRange parUbs(ubsStorage);
-    auto IndexZero = create.zkml.ConstantIndex(0);
-    auto IndexOne = create.zkml.ConstantIndex(1);
     // Iterate over the outer loops
     // for n = 0 .. N:
     //   for g = 0 .. G:
@@ -420,7 +416,7 @@ struct ONNXConvOpLowering : public OpConversionPattern<ONNXConvOp> {
                   std::vector<IndexExpr> multis;
                   IndexExpr accMulti = LiteralIndexExpr(1);
                   IndexExpr NextValue = LiteralIndexExpr(0);
-                  for (unsigned i = 0;i<roundTrips.size()-1;++i) {
+                  for (unsigned i = 0;i<roundTrips.size();++i) {
                     NextValue = NextValue + (accMulti * (DimIndexExpr(redIndices[roundTrips.size() - 1 - i]) - DimIndexExpr(lowerBounds[roundTrips.size() - 1 - i])));
                     accMulti = DimIndexExpr(roundTrips[roundTrips.size() - 1 - i]) * accMulti;
                   }

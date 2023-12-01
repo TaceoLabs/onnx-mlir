@@ -36,8 +36,6 @@ struct ZkMlBuilder : public DialectBuilder {
 
   mlir::Value DotProduct(mlir::Value lhs, mlir::Value rhs) const; 
   mlir::Value Gather(mlir::Type MemRefType, mlir::Value data, mlir::Value indices, int64_t axis) const; 
-  mlir::Value ConstantIndex(int64_t cst) const;
-  mlir::Value AddIndex(mlir::Value lhs, mlir::Value rhs) const;
 };
 
 //====-------------------- Support for Krnl Builder ----------------------===//
