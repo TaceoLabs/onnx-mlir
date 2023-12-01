@@ -15,14 +15,18 @@
 // #include "src/Compiler/CompilerOptions.hpp"
 // TODO check imports
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Index/IR/IndexDialect.h"
+#include "mlir/Dialect/Index/IR/IndexOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/IR/AffineMap.h"
 #include "mlir/IR/BuiltinTypes.h"
-
+#include "mlir/IR/Value.h"
 #include "src/Conversion/ONNXToKrnl/ONNXToKrnlCommon.hpp"
 #include "src/Dialect/Krnl/DialectBuilder.hpp"
 #include "src/Dialect/Krnl/KrnlOps.hpp"
+#include "src/Dialect/Mlir/IndexExpr.hpp"
 #include "src/Dialect/ONNX/ONNXOps/ShapeHelper.hpp"
+#include <algorithm>
 
 using namespace mlir;
 
@@ -359,19 +363,25 @@ struct ONNXConvOpLowering : public OpConversionPattern<ONNXConvOp> {
             assert(redLbs.size() == redUbs.size() &&
                    "Upper bound must be same as Lower bound");
             assert(redLbs.size() > 0 && "must be not empty size for kernel");
-            auto acc = redUbs.front() - redLbs.front();
-            for (unsigned i = 1; i < redLbs.size(); ++i) {
-              acc = acc + (redUbs[i] - redLbs[i]);
+            std::vector<mlir::Value> lowerBounds;
+            std::vector<IndexExpr> roundTrips;
+            roundTrips.resize(redUbs.size());
+            lowerBounds.resize(redLbs.size());
+            // std::transform(std::begin(redLbs), std::end(redLbs), std::begin(lowerBounds), [&](IndexExpr lbs) {
+            //     return lbs.getValue();
+            // });
+            IndexExpr accRoundTrip = LiteralIndexExpr(1);
+            for (unsigned i = 0; i< redUbs.size();++i) {
+              roundTrips[i] = redUbs[i] - redLbs[i];
+              accRoundTrip = accRoundTrip * roundTrips[i];
+              lowerBounds[i] = redLbs[i].getValue();
             }
             Value lhs = create.mem.alloc(
                 MemRefType::get({mlir::ShapedType::kDynamic}, elementType),
-                ValueRange(acc.getValue()));
+                ValueRange(accRoundTrip.getValue()));
             Value rhs = create.mem.alloc(
                 MemRefType::get({mlir::ShapedType::kDynamic}, elementType),
-                ValueRange(acc.getValue()));
-            Value inductionMemRef =
-                create.mem.alloc(MemRefType::get({}, rewriter.getIndexType()));
-            create.krnl.store(IndexZero, inductionMemRef);
+                ValueRange(accRoundTrip.getValue()));
             create.krnl.iterateIE(redLoops, redLoops, redLbs, redUbs,
                 [&](KrnlBuilder &createKrnl, ValueRange redIndices) {
                   IndexExprScope redScope(createKrnl);
@@ -381,6 +391,7 @@ struct ONNXConvOpLowering : public OpConversionPattern<ONNXConvOp> {
                   // Create access function for input image:
                   // [n, ci, ho * sh + kh * dh - ph, wo * sw + kw * dw -
                   // pw].
+                  IndexExpr CurrentOffset;
                   SmallVector<IndexExpr, 4> inputAccessFct;
                   DimIndexExpr n(outerIndices[0]);
                   inputAccessFct.emplace_back(n);
@@ -410,15 +421,37 @@ struct ONNXConvOpLowering : public OpConversionPattern<ONNXConvOp> {
                   }
                   Value filter =
                       create.krnl.loadIE(filterOperand, filterAccessFct);
-                  auto OldInduction = create.krnl.load(inductionMemRef);
-                  create.krnl.store(image, lhs, {OldInduction});
-                  create.krnl.store(filter, rhs, {OldInduction});
-                  Value NewInduction =
-                      create.zkml.AddIndex(OldInduction, IndexOne);
-                  create.krnl.store(NewInduction, inductionMemRef);
+
+                  std::vector<IndexExpr> currentRoundTrip(redIndices.size());
+                  for (unsigned i = 0;i<redIndices.size();++i) {
+                    currentRoundTrip[i] = DimIndexExpr(redIndices[i]) - DimIndexExpr(lowerBounds[i]);
+                  }
+                  // auto multi2 = LiteralIndexExpr(1);
+                  // auto multi1 = DimIndexExpr(roundTrips[2]) * multi2;
+                  // auto multi0 = DimIndexExpr(roundTrips[1]) * multi1;
+                  // IndexExpr NextValue = (currentRoundTrip[0] * multi0) + (currentRoundTrip[1] * multi1) + currentRoundTrip[2];
+
+                  std::vector<IndexExpr> multis;
+                  IndexExpr accMulti = LiteralIndexExpr(1);
+                  for (unsigned i = 0;i<roundTrips.size()-1;++i) {
+                    multis.emplace_back(DimIndexExpr(accMulti));
+                    accMulti = DimIndexExpr(roundTrips[roundTrips.size() - 1 - i]) * accMulti;
+                  }
+                  multis.emplace_back(DimIndexExpr(accMulti));
+                  std::reverse(multis.begin(), multis.end());
+                  IndexExpr NextValue = LiteralIndexExpr(0);
+                  for (unsigned i = 0;i<currentRoundTrip.size();++i) {
+                    NextValue = NextValue + (currentRoundTrip[i] * multis[i]);
+                  }
+                  // IndexExpr NextValue = (currentRoundTrip[0] * multis[0]) + (currentRoundTrip[1] * multis[1]) + (currentRoundTrip[2] * multis[2]);
+                  // IndexExpr NextValue = (currentRoundTrip[0] * multi0) + (currentRoundTrip[1] * multi1) + currentRoundTrip[2];
+                  create.krnl.storeIE(image, lhs, {NextValue});
+                  create.krnl.storeIE(filter, rhs, {NextValue});
                 }); // Reduction loops.
                     // Finish the reduction and store in result array.
             Value result = create.zkml.DotProduct(lhs, rhs);
+            create.mem.dealloc(lhs);
+            create.mem.dealloc(rhs);
             // Store the result. Optionally add bias.
             SymbolIndexExpr coInOutputSpacial(co);
             if (hasBias) {
