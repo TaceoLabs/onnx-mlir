@@ -363,13 +363,8 @@ struct ONNXConvOpLowering : public OpConversionPattern<ONNXConvOp> {
             assert(redLbs.size() == redUbs.size() &&
                    "Upper bound must be same as Lower bound");
             assert(redLbs.size() > 0 && "must be not empty size for kernel");
-            std::vector<mlir::Value> lowerBounds;
-            std::vector<IndexExpr> roundTrips;
-            roundTrips.resize(redUbs.size());
-            lowerBounds.resize(redLbs.size());
-            // std::transform(std::begin(redLbs), std::end(redLbs), std::begin(lowerBounds), [&](IndexExpr lbs) {
-            //     return lbs.getValue();
-            // });
+            std::vector<mlir::Value> lowerBounds(redLbs.size());
+            std::vector<IndexExpr> roundTrips(redLbs.size());
             IndexExpr accRoundTrip = LiteralIndexExpr(1);
             for (unsigned i = 0; i< redUbs.size();++i) {
               roundTrips[i] = redUbs[i] - redLbs[i];
@@ -422,29 +417,13 @@ struct ONNXConvOpLowering : public OpConversionPattern<ONNXConvOp> {
                   Value filter =
                       create.krnl.loadIE(filterOperand, filterAccessFct);
 
-                  std::vector<IndexExpr> currentRoundTrip(redIndices.size());
-                  for (unsigned i = 0;i<redIndices.size();++i) {
-                    currentRoundTrip[i] = DimIndexExpr(redIndices[i]) - DimIndexExpr(lowerBounds[i]);
-                  }
-                  // auto multi2 = LiteralIndexExpr(1);
-                  // auto multi1 = DimIndexExpr(roundTrips[2]) * multi2;
-                  // auto multi0 = DimIndexExpr(roundTrips[1]) * multi1;
-                  // IndexExpr NextValue = (currentRoundTrip[0] * multi0) + (currentRoundTrip[1] * multi1) + currentRoundTrip[2];
-
                   std::vector<IndexExpr> multis;
                   IndexExpr accMulti = LiteralIndexExpr(1);
+                  IndexExpr NextValue = LiteralIndexExpr(0);
                   for (unsigned i = 0;i<roundTrips.size()-1;++i) {
-                    multis.emplace_back(DimIndexExpr(accMulti));
+                    NextValue = NextValue + (accMulti * (DimIndexExpr(redIndices[roundTrips.size() - 1 - i]) - DimIndexExpr(lowerBounds[roundTrips.size() - 1 - i])));
                     accMulti = DimIndexExpr(roundTrips[roundTrips.size() - 1 - i]) * accMulti;
                   }
-                  multis.emplace_back(DimIndexExpr(accMulti));
-                  std::reverse(multis.begin(), multis.end());
-                  IndexExpr NextValue = LiteralIndexExpr(0);
-                  for (unsigned i = 0;i<currentRoundTrip.size();++i) {
-                    NextValue = NextValue + (currentRoundTrip[i] * multis[i]);
-                  }
-                  // IndexExpr NextValue = (currentRoundTrip[0] * multis[0]) + (currentRoundTrip[1] * multis[1]) + (currentRoundTrip[2] * multis[2]);
-                  // IndexExpr NextValue = (currentRoundTrip[0] * multi0) + (currentRoundTrip[1] * multi1) + currentRoundTrip[2];
                   create.krnl.storeIE(image, lhs, {NextValue});
                   create.krnl.storeIE(filter, rhs, {NextValue});
                 }); // Reduction loops.
