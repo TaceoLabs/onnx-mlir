@@ -770,7 +770,7 @@ static std::string getDataLayout(const Location &loc) {
 }
 
 // Return 0 on success, error code on failure.
-static int setupModule(mlir::OwningOpRef<ModuleOp> &module,
+int setupModule(mlir::OwningOpRef<ModuleOp> &module,
     mlir::MLIRContext &context, std::string outputNameNoExt) {
   // Initialize the targets support for all targets LLVM was configured for.
   llvm::InitializeAllTargets();

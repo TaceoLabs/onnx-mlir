@@ -21,7 +21,6 @@
 #include "mlir/Dialect/Index/IR/IndexDialect.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Shape/IR/Shape.h"
-#include "mlir/Dialect/zkml/ZkMlDialect.h"
 #include "src/Compiler/CompilerOptions.hpp"
 #include "mlir/Dialect/zkml/ZkMlDialect.h"
 
@@ -306,7 +305,7 @@ struct FrontendToKrnlLoweringPass
   FrontendToKrnlLoweringPass(const FrontendToKrnlLoweringPass &pass)
       : PassWrapper<FrontendToKrnlLoweringPass, OperationPass<ModuleOp>>() {}
   FrontendToKrnlLoweringPass(
-      bool enableTiling, bool enableSIMD, bool enableParallel, zkMl) {
+      bool enableTiling, bool enableSIMD, bool enableParallel, bool zkMl) {
     // Below, need explicit assignment to enable implicit conversion of bool to
     // Option<bool>.
     this->enableTiling = enableTiling;
@@ -361,7 +360,7 @@ void FrontendToKrnlLoweringPass::runOnOperation() {
   target.addLegalDialect<KrnlDialect, affine::AffineDialect,
       arith::ArithDialect, func::FuncDialect, linalg::LinalgDialect,
       math::MathDialect, vector::VectorDialect, memref::MemRefDialect,
-      shape::ShapeDialect, scf::SCFDialect, zkml::ZkMlDialect>();
+      shape::ShapeDialect, scf::SCFDialect, zkml::ZkMlDialect, index::IndexDialect>();
   // Needed to support unsigned int computations. To be removed if we use a
   // scheme that does not rely on the UnrealizedConversionCastOp.
   target.addLegalOp<::mlir::UnrealizedConversionCastOp>();
@@ -459,10 +458,12 @@ std::unique_ptr<Pass> createLowerToKrnlPass() {
   return std::make_unique<FrontendToKrnlLoweringPass>();
 }
 
+
 std::unique_ptr<Pass> createLowerToKrnlPass(
-    bool enableTiling, bool enableSIMD, bool enableParallel, bool zkMl=false) {
+    bool enableTiling, bool enableSIMD, bool enableParallel, bool zkMl) {
   return std::make_unique<FrontendToKrnlLoweringPass>(
       enableTiling, enableSIMD, enableParallel, zkMl);
+}
 
 //===----------------------------------------------------------------------===//
 // Support functions for reporting.

@@ -15,7 +15,6 @@
 #include "llvm/Support/Debug.h"
 #include <functional>
 
-#include "mlir/Dialect/zkml/IR/DotProduct.h"
 #include "mlir/Dialect/zkml/ZkMlDialect.h"
 #include "mlir/IR/ValueRange.h"
 #include "src/Conversion/ONNXToKrnl/ONNXToKrnlCommon.hpp"
@@ -29,7 +28,6 @@
 static constexpr int32_t DISABLE_MAT_VEC_PRODUCT = 0;
 
 using namespace mlir;
-using ZKMLDotProductOp = mlir::zkml::DotProductOp;
 
 namespace onnx_mlir {
 
@@ -470,7 +468,7 @@ struct ONNXMatMulOpLowering : public OpConversionPattern<ONNXMatMulOp> {
     // Non-reduction loop iterations: output-rank.
     create.krnl.iterateIE(loopDef, outerLoops, loopLbs, loopUbs,
         [&](KrnlBuilder &createKrnl, ValueRange outerIndices) {
-          MultiDialectBuilder<KrnlBuilder, MemRefBuilder, MathBuilder> create(
+          MultiDialectBuilder<KrnlBuilder, MemRefBuilder, MathBuilder, ZkMlBuilder> create(
               createKrnl);
           create.krnl.iterate({}, innerLoop, {}, {},
               [&](KrnlBuilder &createKrnl, ValueRange innerIndex) {
@@ -513,15 +511,11 @@ struct ONNXMatMulOpLowering : public OpConversionPattern<ONNXMatMulOp> {
                 create.krnl.store(loadedA, lhs, innerIndex);
                 create.krnl.store(loadedB, rhs, innerIndex);
               });
-          auto builder = OpBuilder(matMulOp);
-          builder.setInsertionPointToEnd(
-              create.krnl.getBuilder().getInsertionBlock());
-          mlir::Value DotProduct = builder.create<ZKMLDotProductOp>(
-              builder.getUnknownLoc(), elementType, lhs, rhs);
+          Value DotProduct = create.zkml.DotProduct(lhs, rhs);
           create.krnl.store(DotProduct, alloc, outerIndices);
         });
-    create.mem.dealloc(lhs);
-    create.mem.dealloc(rhs);
+    // create.mem.dealloc(lhs);
+    // create.mem.dealloc(rhs);
   }
 
   // Handle the cases with 2x2 matrices both for A, B, and C without
@@ -560,7 +554,7 @@ struct ONNXMatMulOpLowering : public OpConversionPattern<ONNXMatMulOp> {
     int bRank = B.getType().cast<MemRefType>().getShape().size();
     int cRank = alloc.getType().cast<MemRefType>().getShape().size();
     if (zkMl) {
-      replaceZkMlMatMul(matMulOp, operandAdaptor, elementType, shapeHelper,
+      replaceZkMlMatMul(matMulOp, adaptor, elementType, shapeHelper,
           alloc, rewriter, loc);
     } else if (enableTiling && aRank == 2 && bRank == 2) {
       // Optimized Matmul only when 2D and allowed to tile and unroll.

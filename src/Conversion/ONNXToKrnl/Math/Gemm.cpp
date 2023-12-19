@@ -199,8 +199,8 @@ struct ONNXGemmOpLowering : public OpConversionPattern<GemmOp> {
           }
           create.krnl.store(res, R, outerIndices);
         });
-    create.mem.dealloc(lhs);
-    create.mem.dealloc(rhs);
+    // create.mem.dealloc(lhs);
+    // create.mem.dealloc(rhs);
   }
 
   void tiledTransposedGemm(Operation *op, ONNXGemmOpAdaptor &adaptor,
@@ -492,7 +492,7 @@ struct ONNXGemmOpLowering : public OpConversionPattern<GemmOp> {
       }
     });
     if (zkMl) {
-      replaceZkMlGemm(gemmOp, operandAdaptor, elementType, shapeHelper, alloc,
+      replaceZkMlGemm(gemmOp, adaptor, elementType, shapeHelper, alloc,
           zero, alpha, beta, rewriter, loc);
     } else if (enableTiling && !DEBUG_OPTIMIZED_OFF) {
       tiledTransposedGemm(op, adaptor, elementType, shapeHelper, alloc, zero,

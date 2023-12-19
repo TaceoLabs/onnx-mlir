@@ -47,6 +47,9 @@ struct Command {
 // end to end. Initializes accelerator(s) if required.
 void loadDialects(mlir::MLIRContext &context);
 
+int setupModule(mlir::OwningOpRef<mlir::ModuleOp> &module,
+    mlir::MLIRContext &context, std::string outputNameNoExt);
+
 // ProcessInput* return 0 on success, OnnxMlirCompilerErrorCodes on error.
 int processInputFile(llvm::StringRef inputFilename, mlir::MLIRContext &context,
     mlir::OwningOpRef<mlir::ModuleOp> &module, std::string *errorMessage);

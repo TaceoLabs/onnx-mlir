@@ -38,7 +38,7 @@ private:
     Location loc = ONNXLoc<ONNXGatherOp>(op);
     ValueRange operands = adaptor.getOperands();
 
-    MultiDialectBuilder<KrnlBuilder, IndexExprBuilderForKrnl, ZkMlBuilder> create(
+    MultiDialectBuilder<KrnlBuilder, MemRefBuilder, IndexExprBuilderForKrnl, ZkMlBuilder> create(
         rewriter, loc);
     //old 
    //ONNXGatherOpAdaptor operandAdaptor(operands);
@@ -69,61 +69,80 @@ private:
     if (this->zkMl) {
       rewriter.replaceOp(op, create.zkml.Gather(outputMemRefType, data, indices, gatherOp.getAxis()));
     } else {
-      // Insert an allocation and deallocation for the output of this operation.
-      Value alloc = insertAllocAndDeallocSimple(
-          rewriter, op, outputMemRefType, loc, shapeHelper.getOutputDims());
+          bool indicesMayBeNegative = !indicesAreNonNegativeConstants(indices);
 
-      int64_t axisLit = gatherOp.getAxis();
-      int64_t dataRank = data.getType().cast<MemRefType>().getRank();
-      int64_t indicesRank = indices.getType().cast<MemRefType>().getRank();
+    // Negative value means counting dimensions from the back.
+    axisLit = axisLit < 0 ? axisLit + dataRank : axisLit;
 
-      // Determine whether indices may be negative.
-      bool indicesMayBeNegative = !indicesAreNonNegativeConstants(indices);
+    int64_t outputRank = shapeHelper.getOutputDims().size();
+    int iIndexStart = 0;
+    int jIndexStart = iIndexStart + axisLit;
+    int kIndexStart = jIndexStart + indicesRank - (axisLit + 1);
 
-      // Negative value means counting dimensions from the back.
-      axisLit = axisLit < 0 ? axisLit + dataRank : axisLit;
+    LiteralIndexExpr zeroIE(0);
+    DimsExpr dataDims;
+    create.krnlIE.getShapeAsDims(data, dataDims);
 
-      int64_t outputRank = shapeHelper.getOutputDims().size();
-      int iIndexStart = 0;
-      int jIndexStart = iIndexStart + axisLit;
-      int kIndexStart = jIndexStart + indicesRank - (axisLit + 1);
+    /*
+      The pattern that we are using is that of numpy.take.
 
-      LiteralIndexExpr zeroIE(0);
-      DimsExpr dataDims;
-      create.krnlIE.getShapeAsDims(data, dataDims);
+      Ni, Nk = data.shape[:axis], data.shape[axis+1:]
+      Nj = indices.shape
+      for ii in ndindex(Ni):
+        for jj in ndindex(Nj):
+          for kk in ndindex(Nk):
+            out[ii + jj + kk] = data[ii + (indices[jj],) + kk]
+    */
+    // Define loops and iteration trip counts (equivalent to size of output)
+    ValueRange loopDef = create.krnl.defineLoops(outputRank);
+    DimsExpr lbs(outputRank, zeroIE);
+    create.krnl.iterateIE(loopDef, loopDef, lbs, shapeHelper.getOutputDims(),
+        [&](KrnlBuilder &createKrnl, ValueRange loopInd) {
+          // Insert code inside the loop.
+          IndexExprScope innerLoopScope(createKrnl);
+          SymbolIndexExpr axisDim(dataDims[axisLit]);
 
-      /*
-        The pattern that we are using is that of numpy.take.
+          // compute the loop indices for the output
+          SmallVector<IndexExpr, 4> outputAccessFct;
+          getIndexExprList<DimIndexExpr>(loopInd, outputAccessFct);
 
-        Ni, Nk = data.shape[:axis], data.shape[axis+1:]
-        Nj = indices.shape
-        for ii in ndindex(Ni):
-          for jj in ndindex(Nj):
-            for kk in ndindex(Nk):
-              out[ii + jj + kk] = data[ii + (indices[jj],) + kk]
+          // Compute access function for indices[jjs].
+          SmallVector<IndexExpr, 4> indicesAccessFct;
+          for (int j = 0; j < indicesRank; ++j)
+            indicesAccessFct.emplace_back(outputAccessFct[jIndexStart + j]);
+          Value indexVal = createKrnl.loadIE(indices, indicesAccessFct);
+          // Loaded value is an index that is not affine
+          IndexExpr index = NonAffineIndexExpr(indexVal);
+          // When index may be negative, add axis Dim to it.
+          if (indicesMayBeNegative)
+            index = index.selectOrSelf(index < zeroIE, index + axisDim);
 
-      // Define loops and iteration trip counts (equivalent to size of output)
-      // */
-      ValueRange loopDef = create.krnl.defineLoops(outputRank);
-      DimsExpr lbs(outputRank, zeroIE);
-      create.krnl.iterateIE(loopDef, loopDef, lbs, shapeHelper.getOutputDims(),
-          [&](KrnlBuilder &createKrnl, ValueRange loopInd) {
-            // Insert code inside the loop.
-            IndexExprScope innerLoopScope(createKrnl);
-            SymbolIndexExpr axisDim(dataDims[axisLit]);
+          // Compute access function of data: data[ii + (indices[jj],) + kk]
+          SmallVector<IndexExpr, 4> dataAccessFct;
+          // First add indices iis
+          for (int i = 0; i < axisLit; ++i)
+            dataAccessFct.emplace_back(outputAccessFct[iIndexStart + i]);
+          // Then add indices[jj] (indexVal).
+          dataAccessFct.emplace_back(index);
+          // Then add kks.
+          for (int k = axisLit + 1; k < dataRank; ++k)
+            dataAccessFct.emplace_back(outputAccessFct[kIndexStart + k]);
+          Value dataVal = createKrnl.loadIE(data, dataAccessFct);
 
-            // Save data into output
-            createKrnl.storeIE(dataVal, alloc, outputAccessFct);
-          });
-      rewriter.replaceOp(op, alloc);
-      onnxToKrnlSimdReport(op);
+          // Save data into output
+          createKrnl.storeIE(dataVal, alloc, outputAccessFct);
+        });
+    rewriter.replaceOp(op, alloc);
+    onnxToKrnlSimdReport(op);
     }
     return success();
   };
+};
 
   void populateLoweringONNXGatherOpPattern(RewritePatternSet &patterns,
       TypeConverter &typeConverter, MLIRContext *ctx, bool zkMl) {
     patterns.insert<ONNXGatherOpLowering>(typeConverter, ctx, zkMl);
   }
+
 
 } // namespace onnx_mlir
