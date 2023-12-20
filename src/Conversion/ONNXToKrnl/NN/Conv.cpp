@@ -425,8 +425,8 @@ struct ONNXConvOpLowering : public OpConversionPattern<ONNXConvOp> {
                 }); // Reduction loops.
                     // Finish the reduction and store in result array.
             Value result = create.zkml.DotProduct(lhs, rhs);
-            // create.mem.dealloc(lhs);
-            // create.mem.dealloc(rhs);
+            create.mem.dealloc(lhs);
+            create.mem.dealloc(rhs);
             // Store the result. Optionally add bias.
             SymbolIndexExpr coInOutputSpacial(co);
             if (hasBias) {

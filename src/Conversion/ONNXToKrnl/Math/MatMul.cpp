@@ -514,8 +514,8 @@ struct ONNXMatMulOpLowering : public OpConversionPattern<ONNXMatMulOp> {
           Value DotProduct = create.zkml.DotProduct(lhs, rhs);
           create.krnl.store(DotProduct, alloc, outerIndices);
         });
-    // create.mem.dealloc(lhs);
-    // create.mem.dealloc(rhs);
+    create.mem.dealloc(lhs);
+    create.mem.dealloc(rhs);
   }
 
   // Handle the cases with 2x2 matrices both for A, B, and C without
