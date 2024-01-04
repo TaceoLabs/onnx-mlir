@@ -16,10 +16,12 @@
 #include <cassert>
 #include <cstdint>
 
+#include "mlir/Dialect/zkml/IR/ArgMax.h"
+#include "mlir/Dialect/zkml/IR/ArgMin.h"
+#include "mlir/Dialect/zkml/IR/Gather.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "src/Dialect/Krnl/DialectBuilder.hpp"
 #include "src/Dialect/ONNX/ONNXOps.hpp"
-#include "mlir/Dialect/zkml/IR/Gather.h"
 
 using namespace mlir;
 
@@ -58,16 +60,36 @@ static StringRef getFormat(const Type &inputType) {
 }
 
 //====-------------------- Support for ZkMl Builder ----------------------===//
-  Value ZkMlBuilder::DotProduct(mlir::Value lhs, mlir::Value rhs) const {
-    assert(lhs.getType() == rhs.getType() && "values must be same type for DotProduct");
-    assert(lhs.getType().isa<MemRefType>() && "must be MemRefType for DotProduct");
-    Type elementType = lhs.getType().cast<MemRefType>().getElementType();
-    return b().create<zkml::DotProductOp>(loc(), elementType, lhs, rhs);
-  }
+Value ZkMlBuilder::DotProduct(mlir::Value lhs, mlir::Value rhs) const {
+  assert(lhs.getType() == rhs.getType() &&
+         "values must be same type for DotProduct");
+  assert(
+      lhs.getType().isa<MemRefType>() && "must be MemRefType for DotProduct");
+  Type elementType = lhs.getType().cast<MemRefType>().getElementType();
+  return b().create<zkml::DotProductOp>(loc(), elementType, lhs, rhs);
+}
 
-  Value ZkMlBuilder::Gather(Type MemRefType, Value data, Value indices, int64_t axis) const {
-    return b().create<zkml::GatherOp>(loc(), MemRefType, data, indices, axis);
-  }
+Value ZkMlBuilder::Gather(
+    Type MemRefType, Value data, Value indices, int64_t axis) const {
+  return b().create<zkml::GatherOp>(loc(), MemRefType, data, indices, axis);
+}
+template <>
+ValueRange ZkMlBuilder::ArgMinMax<ONNXArgMinOp>(TypeRange resultTypes,
+    Value acc, Value next, Value indexAcc, Value indexNext,
+    bool isSelectLastIndex) const {
+  zkml::ArgMinOp ArgMin = b().create<zkml::ArgMinOp>(
+      loc(), resultTypes, acc, next, indexAcc, indexNext, isSelectLastIndex);
+  return ArgMin.getResults();
+}
+template <>
+ValueRange ZkMlBuilder::ArgMinMax<ONNXArgMaxOp>(TypeRange resultTypes,
+    Value acc, Value next, Value indexAcc, Value indexNext,
+    bool isSelectLastIndex) const {
+  zkml::ArgMaxOp ArgMax = b().create<zkml::ArgMaxOp>(
+      loc(), resultTypes, acc, next, indexAcc, indexNext, isSelectLastIndex);
+  return ArgMax.getResults();
+}
+
 //====---------------- Support for Krnl Builder ----------------------===//
 
 Value KrnlBuilder::load(Value memref, ValueRange indices) const {

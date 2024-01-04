@@ -36,6 +36,7 @@ struct ZkMlBuilder : public DialectBuilder {
 
   mlir::Value DotProduct(mlir::Value lhs, mlir::Value rhs) const; 
   mlir::Value Gather(mlir::Type MemRefType, mlir::Value data, mlir::Value indices, int64_t axis) const; 
+  template <typename ARG_OP> mlir::ValueRange ArgMinMax(mlir::TypeRange resultTypes, mlir::Value acc, mlir::Value next, mlir::Value indexAcc, mlir::Value indexNext, bool isSelectLastIndex) const;
 };
 
 //====-------------------- Support for Krnl Builder ----------------------===//

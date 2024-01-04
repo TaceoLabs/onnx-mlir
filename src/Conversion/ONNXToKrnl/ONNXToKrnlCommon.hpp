@@ -373,7 +373,7 @@ void populateLoweringONNXSequenceLengthOpPattern(
 
 // `Tensor` directory methods:
 void populateLoweringONNXArgMinMaxOpPattern(
-    mlir::RewritePatternSet &, mlir::TypeConverter &, mlir::MLIRContext *);
+    mlir::RewritePatternSet &, mlir::TypeConverter &, mlir::MLIRContext *, bool zkMl);
 void populateLoweringONNXDimOpPattern(
     mlir::RewritePatternSet &, mlir::TypeConverter &, mlir::MLIRContext *);
 void populateLoweringONNXUnsqueezeOpPattern(

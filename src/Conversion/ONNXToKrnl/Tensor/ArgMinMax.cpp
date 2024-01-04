@@ -15,6 +15,7 @@
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "src/Conversion/ONNXToKrnl/ONNXToKrnlCommon.hpp"
 #include "src/Dialect/ONNX/ONNXOps/ShapeHelper.hpp"
+#include "src/Support/TypeUtilities.hpp"
 
 using namespace mlir;
 
@@ -38,20 +39,23 @@ inline Value getCondition<ONNXArgMaxOp>(
 template <typename ARG_OP>
 struct ONNXArgMinMaxOpLowering : public OpConversionPattern<ARG_OP> {
   using OpAdaptor = typename ARG_OP::Adaptor;
+  bool zkMl;
 
-  ONNXArgMinMaxOpLowering(TypeConverter &typeConverter, MLIRContext *ctx)
-      : OpConversionPattern<ARG_OP>(typeConverter, ctx) {}
+  ONNXArgMinMaxOpLowering(
+      TypeConverter &typeConverter, MLIRContext *ctx, bool zkMl)
+      : OpConversionPattern<ARG_OP>(typeConverter, ctx), zkMl(zkMl) {}
 
   LogicalResult matchAndRewrite(ARG_OP argOp, OpAdaptor adaptor,
       ConversionPatternRewriter &rewriter) const final {
     Operation *op = argOp.getOperation();
     Location loc = ONNXLoc<ARG_OP>(op);
+
     ValueRange operands = adaptor.getOperands();
 
     // Gather info.
     IndexExprScope scope(&rewriter, loc);
     MultiDialectBuilder<KrnlBuilder, IndexExprBuilderForKrnl, MathBuilder,
-        MemRefBuilder>
+        MemRefBuilder, ZkMlBuilder>
         create(rewriter, loc);
 
     // Get shape.
@@ -82,6 +86,10 @@ struct ONNXArgMinMaxOpLowering : public OpConversionPattern<ARG_OP> {
     int64_t keepdims = argOp.getKeepdims();
     bool isKeepdims = (keepdims == 1) ? true : false;
 
+    // this is always one apparently
+    int64_t selectLastIndex = argOp.getSelectLastIndex();
+    bool isSelectLastIndex = (keepdims == 1) ? true : false;
+
     // Get type information
     llvm::SmallVector<int64_t, 1> axes;
     axes.push_back(axis);
@@ -96,58 +104,108 @@ struct ONNXArgMinMaxOpLowering : public OpConversionPattern<ARG_OP> {
     Value zero = create.math.constant(reducedElementType, 0);
     auto zeroIndex = create.math.constantIndex(0);
 
-    // 1. Krnl loops to initialize the result.
-    ValueRange initLoopDef = create.krnl.defineLoops(reducedRank);
-    SmallVector<IndexExpr, 4> initLbs(reducedRank, LiteralIndexExpr(0));
-    create.krnl.iterateIE(initLoopDef, initLoopDef, initLbs, outputDims,
-        [&](KrnlBuilder &createKrnl, ValueRange loopInd) {
-          createKrnl.store(minusOne, alloc, loopInd);
-        });
+    if (zkMl) {
+      Type elementType =
+          op->getOperand(0).getType().cast<TensorType>().getElementType();
+      ValueRange calcLoopDef = create.krnl.defineLoops(dataRank - 1);
+      SmallVector<IndexExpr, 4> lbs(dataRank - 1, LiteralIndexExpr(0));
+      SmallVector<IndexExpr, 4> ubs;
+      for (uint64_t i = 0; i < dataRank - 1; ++i) {
+        ubs.emplace_back(create.krnlIE.getShapeAsDim(data, i));
+      }
+      ValueRange innerLoopDef = create.krnl.defineLoops(1);
+      SmallVector<IndexExpr, 4> innerLbs(1, LiteralIndexExpr(1));
+      SmallVector<IndexExpr, 4> innerUbs;
+      innerUbs.emplace_back(create.krnlIE.getShapeAsDim(data, dataRank - 1));
 
-    // 2. Krnl loop to calculate arg min/arg max.
-    ValueRange calcLoopDef = create.krnl.defineLoops(dataRank);
-    SmallVector<IndexExpr, 4> lbs(dataRank, LiteralIndexExpr(0));
-    SmallVector<IndexExpr, 4> ubs;
-    create.krnlIE.getShapeAsDims(data, ubs);
-    create.krnl.iterateIE(calcLoopDef, calcLoopDef, lbs, ubs,
-        [&](KrnlBuilder &createKrnl, ValueRange loopInd) {
-          // Handle the operation:
-          SmallVector<Value, 4> inLoopIVs, outLoopIVs, dstLoopIVs;
+      create.krnl.iterateIE(calcLoopDef, calcLoopDef, lbs, ubs,
+          [&](KrnlBuilder &createKrnl, ValueRange outerIndices) {
+            SmallVector<Value, 4> inLoopIVs, outLoopIVs;
+            for (int i = 0; i < dataRank - 1; ++i) {
+              inLoopIVs.push_back(outerIndices[i]);
+            }
+            inLoopIVs.emplace_back(zeroIndex);
+            Value accPtr = create.mem.alloca(MemRefType::get({}, elementType));
+            Value init = createKrnl.load(data, inLoopIVs);
+            createKrnl.store(init, accPtr);
+            // induction variables of current min/max value
+            for (int i = 0; i < reducedRank; ++i) {
+              if (outInDimMap.find(i) != outInDimMap.end())
+                outLoopIVs.push_back(inLoopIVs[outInDimMap[i]]);
+              else
+                outLoopIVs.push_back(zeroIndex);
+            }
+            createKrnl.store(zero, alloc, outLoopIVs);
+            create.krnl.iterateIE(innerLoopDef, innerLoopDef, innerLbs,
+                innerUbs,
+                [&](KrnlBuilder &createKrnl, ValueRange innerIndices) {
+                  SmallVector<Value, 4> nextIndices;
+                  for (int i = 0; i < dataRank - 1; ++i) {
+                    nextIndices.push_back(outerIndices[i]);
+                  }
+                  nextIndices.push_back(innerIndices[0]);
+                  Value acc = createKrnl.load(accPtr);
+                  Value accIndex = createKrnl.load(alloc, outLoopIVs);
+                  Value next = createKrnl.load(data, nextIndices);
+                  ValueRange results = create.zkml.ArgMinMax<ARG_OP>(
+                      {elementType, reducedElementType}, acc, next, accIndex,
+                      innerIndices[0], isSelectLastIndex);
+                  createKrnl.store(results[0], accPtr);
+                  createKrnl.store(results[1], alloc, outLoopIVs);
+                });
+          });
+    } else {
+      // 1. Krnl loops to initialize the result.
+      ValueRange initLoopDef = create.krnl.defineLoops(reducedRank);
+      SmallVector<IndexExpr, 4> initLbs(reducedRank, LiteralIndexExpr(0));
+      create.krnl.iterateIE(initLoopDef, initLoopDef, initLbs, outputDims,
+          [&](KrnlBuilder &createKrnl, ValueRange loopInd) {
+            createKrnl.store(minusOne, alloc, loopInd);
+          });
+      ValueRange calcLoopDef = create.krnl.defineLoops(dataRank);
+      SmallVector<IndexExpr, 4> lbs(dataRank, LiteralIndexExpr(0));
+      SmallVector<IndexExpr, 4> ubs;
+      create.krnlIE.getShapeAsDims(data, ubs);
+      create.krnl.iterateIE(calcLoopDef, calcLoopDef, lbs, ubs,
+          [&](KrnlBuilder &createKrnl, ValueRange loopInd) {
+            // Handle the operation:
+            SmallVector<Value, 4> inLoopIVs, outLoopIVs, dstLoopIVs;
 
-          for (int i = 0; i < dataRank; ++i)
-            inLoopIVs.push_back(loopInd[i]);
+            for (int i = 0; i < dataRank; ++i)
+              inLoopIVs.push_back(loopInd[i]);
 
-          for (int i = 0; i < reducedRank; ++i) {
-            if (outInDimMap.find(i) != outInDimMap.end())
-              outLoopIVs.push_back(inLoopIVs[outInDimMap[i]]);
-            else
-              outLoopIVs.push_back(zeroIndex);
-          }
+            for (int i = 0; i < reducedRank; ++i) {
+              if (outInDimMap.find(i) != outInDimMap.end())
+                outLoopIVs.push_back(inLoopIVs[outInDimMap[i]]);
+              else
+                outLoopIVs.push_back(zeroIndex);
+            }
 
-          Value next = createKrnl.load(data, inLoopIVs);
-          Value idx = createKrnl.load(alloc, outLoopIVs);
+            Value next = createKrnl.load(data, inLoopIVs);
+            Value idx = createKrnl.load(alloc, outLoopIVs);
 
-          // if index is less than 0, we should set 0 as initial position
-          Value lessThanZero = create.math.slt(idx, zero);
-          idx = create.math.select(lessThanZero, zero, idx);
+            // if index is less than 0, we should set 0 as initial position
+            Value lessThanZero = create.math.slt(idx, zero);
+            idx = create.math.select(lessThanZero, zero, idx);
 
-          // induction variables of current min/max value
-          for (int i = 0; i < dataRank; ++i) {
-            if (i != axis)
-              dstLoopIVs.push_back(loopInd[i]);
-            else
-              dstLoopIVs.push_back(rewriter.create<arith::IndexCastOp>(
-                  loc, rewriter.getIndexType(), idx));
-          }
-          Value dstVal = createKrnl.load(data, dstLoopIVs);
+            // induction variables of current min/max value
+            for (int i = 0; i < dataRank; ++i) {
+              if (i != axis)
+                dstLoopIVs.push_back(loopInd[i]);
+              else
+                dstLoopIVs.push_back(rewriter.create<arith::IndexCastOp>(
+                    loc, rewriter.getIndexType(), idx));
+            }
+            Value dstVal = createKrnl.load(data, dstLoopIVs);
 
-          // if next value is smaller/larger than current value, update index
-          Value newDstVal = getCondition<ARG_OP>(create.math, next, dstVal);
-          Value pos =
-              create.math.cast(rewriter.getIntegerType(64), inLoopIVs[axis]);
-          idx = create.math.select(newDstVal, pos, idx);
-          createKrnl.store(idx, alloc, outLoopIVs);
-        });
+            // if next value is smaller/larger than current value, update index
+            Value newDstVal = getCondition<ARG_OP>(create.math, next, dstVal);
+            Value pos =
+                create.math.cast(rewriter.getIntegerType(64), inLoopIVs[axis]);
+            idx = create.math.select(newDstVal, pos, idx);
+            createKrnl.store(idx, alloc, outLoopIVs);
+          });
+    }
 
     rewriter.replaceOp(op, alloc);
     onnxToKrnlSimdReport(op);
@@ -156,11 +214,11 @@ struct ONNXArgMinMaxOpLowering : public OpConversionPattern<ARG_OP> {
 };
 
 void populateLoweringONNXArgMinMaxOpPattern(RewritePatternSet &patterns,
-    TypeConverter &typeConverter, MLIRContext *ctx) {
+    TypeConverter &typeConverter, MLIRContext *ctx, bool zkMl) {
   patterns.insert<ONNXArgMinMaxOpLowering<mlir::ONNXArgMinOp>>(
-      typeConverter, ctx);
+      typeConverter, ctx, zkMl);
   patterns.insert<ONNXArgMinMaxOpLowering<mlir::ONNXArgMaxOp>>(
-      typeConverter, ctx);
+      typeConverter, ctx, zkMl);
 }
 
 } // namespace onnx_mlir
