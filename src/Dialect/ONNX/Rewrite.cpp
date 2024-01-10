@@ -791,6 +791,49 @@ public:
 };
 
 // =============================================================================
+// Rewrite Power when 0.5 to Sqrt
+// =============================================================================
+
+class PowToSqrtRewritePattern : public OpRewritePattern<ONNXPowOp> {
+public:
+  using OpRewritePattern<ONNXPowOp>::OpRewritePattern;
+
+  PowToSqrtRewritePattern(MLIRContext *context) : OpRewritePattern(context) {}
+
+  LogicalResult matchAndRewrite(
+      ONNXPowOp powOp, PatternRewriter &rewriter) const override {
+    Operation *op = powOp.getOperation();
+    Location loc = powOp.getLoc();
+    // Test legality
+    if (!CanTransformToSqrt(powOp))
+      return failure();
+    // Rewrite
+    MultiDialectBuilder<OnnxBuilder> create(rewriter, loc);
+    Value input = powOp.getX();
+
+    ShapedType resultType = powOp.getZ().getType().cast<ShapedType>();
+    rewriter.replaceOp(op, {create.onnx.sqrt(resultType, input)});
+    return success();
+  };
+
+private:
+  // Check if a Pow can be simply rewritten as Sqrt.
+  bool CanTransformToSqrt(ONNXPowOp op) const {
+    Value exponent = op.getY();
+    ElementsAttr elementAttr = getElementAttributeFromONNXValue(exponent);
+    if (!elementAttr)
+      return false;
+    if (elementAttr.getNumElements() != 1)
+      return false;
+    Type elementType = elementAttr.getElementType();
+    if (elementType.isa<FloatType>()) {
+      return getScalarValue<double>(elementAttr, elementType) == 0.5;
+    }
+    return false;
+  }
+};
+
+// =============================================================================
 // Rewrite pattern for Power
 // =============================================================================
 
@@ -807,7 +850,7 @@ public:
     Location loc = powOp.getLoc();
     int64_t exponent;
     // Test legality
-    if (!CanExpandPowOpToMul(powOp, exponent))
+    if (!CanExpandPowOpToMul(powOp, exponent)) 
       return failure();
 
     // Rewrite
@@ -1145,6 +1188,7 @@ void ONNXPowOp::getCanonicalizationPatterns(
     RewritePatternSet &result, MLIRContext *context) {
   // Is 64 necessary? Maybe too high?
   result.insert<PowToMulRewritePattern>(context, 64);
+  result.insert<PowToSqrtRewritePattern>(context);
   result.insert<BinaryOpBroadcastAxisPattern<ONNXPowOp>>(context);
 }
 

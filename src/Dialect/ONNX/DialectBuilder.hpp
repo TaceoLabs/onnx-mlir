@@ -140,6 +140,9 @@ struct OnnxBuilder : DialectBuilder {
   mlir::ValueRange split(mlir::TypeRange outputTypes, mlir::Value input,
       mlir::Value split, int64_t axis) const;
 
+  // ONNXSqrtOp
+  mlir::Value sqrt(mlir::Type resultType, mlir::Value A) const;
+
   // ONNXSqueezeOp
   mlir::Value squeeze(
       mlir::Type outputType, mlir::Value data, mlir::Value axes) const;

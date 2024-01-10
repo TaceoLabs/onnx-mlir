@@ -266,6 +266,11 @@ ValueRange OnnxBuilder::split(
       .getResults();
 }
 
+mlir::Value OnnxBuilder::sqrt(mlir::Type resultType, mlir::Value A) const {
+  return createTypedOpAndInferShapes<ONNXSqrtOp>(
+      resultType, toTensor(A));
+}
+
 Value OnnxBuilder::squeeze(Type outputType, Value data, Value axes) const {
   return createTypedOpAndInferShapes<ONNXSqueezeOp>(
       toTensor(outputType), toTensor(data), toTensor(axes));
