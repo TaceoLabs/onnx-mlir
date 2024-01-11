@@ -449,6 +449,7 @@ struct ONNXMatMulOpLowering : public OpConversionPattern<ONNXMatMulOp> {
       loopUbs.emplace_back(shapeHelper.getOutputDims()[i]);
       outerLoops.emplace_back(loopDef[i]);
     }
+    assert(shapeHelper.aDims.size() == shapeHelper.bDims.size() && "A and B must have same rank");
     int aRank = shapeHelper.aDims.size();
     int bRank = aRank; // Add for better readability.
     IndexExpr innerUb = shapeHelper.aDims[aRank - 1];
@@ -458,10 +459,6 @@ struct ONNXMatMulOpLowering : public OpConversionPattern<ONNXMatMulOp> {
 
     unsigned DotShape =
         matMulOp.getA().getType().cast<TensorType>().getShape().back();
-    assert(
-        DotShape ==
-            matMulOp.getB().getType().cast<TensorType>().getShape().front() &&
-        "Dims must match for DotProduct");
     Value lhs = create.mem.alloc(MemRefType::get({DotShape}, elementType));
     Value rhs = create.mem.alloc(MemRefType::get({DotShape}, elementType));
 
