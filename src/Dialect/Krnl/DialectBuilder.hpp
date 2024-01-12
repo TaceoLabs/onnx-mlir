@@ -14,12 +14,12 @@
 
 #pragma once
 
+#include "mlir/Dialect/zkml/IR/DotProduct.h"
 #include "mlir/IR/Types.h"
 #include "mlir/IR/Value.h"
 #include "src/Dialect/Krnl/KrnlOps.hpp"
 #include "src/Dialect/Mlir/DialectBuilder.hpp"
 #include "src/Dialect/Mlir/IndexExprBuilder.hpp"
-#include "mlir/Dialect/zkml/IR/DotProduct.h"
 #include <cstddef>
 #include <cstdint>
 
@@ -34,9 +34,13 @@ struct ZkMlBuilder : public DialectBuilder {
   ZkMlBuilder(const DialectBuilder &db) : DialectBuilder(db) {}
   virtual ~ZkMlBuilder() {}
 
-  mlir::Value DotProduct(mlir::Value lhs, mlir::Value rhs) const; 
-  mlir::Value Gather(mlir::Type MemRefType, mlir::Value data, mlir::Value indices, int64_t axis) const; 
-  template <typename ARG_OP> mlir::ValueRange ArgMinMax(mlir::TypeRange resultTypes, mlir::Value acc, mlir::Value next, mlir::Value indexAcc, mlir::Value indexNext, bool isSelectLastIndex) const;
+  mlir::Value DotProduct(mlir::Value lhs, mlir::Value rhs) const;
+  mlir::Value Gather(mlir::Type resultType, mlir::Value prevAcc, mlir::Value data, mlir::Value accIndex,
+      mlir::Value dataIndex) const;
+  template <typename ARG_OP>
+  mlir::ValueRange ArgMinMax(mlir::TypeRange resultTypes, mlir::Value acc,
+      mlir::Value next, mlir::Value indexAcc, mlir::Value indexNext,
+      bool isSelectLastIndex) const;
 };
 
 //====-------------------- Support for Krnl Builder ----------------------===//

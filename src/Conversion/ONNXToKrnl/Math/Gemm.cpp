@@ -176,12 +176,6 @@ struct ONNXGemmOpLowering : public OpConversionPattern<GemmOp> {
                 create.krnl.store(aVal, lhs, innerIndex);
                 create.krnl.store(bVal, rhs, innerIndex);
               });
-          // auto builder = OpBuilder(gemmOp);
-          // builder.setInsertionPointToEnd(
-          //     create.krnl.getBuilder().getInsertionBlock());
-          // mlir::Value DotProduct = builder.create<ZKMLDotProductOp>(
-          //     builder.getUnknownLoc(), elementType, lhs, rhs);
-          // create.krnl.store(DotProduct, alloc, outerIndices);
           // Handle alpha/beta coefficients.
           Value DotProduct = create.zkml.DotProduct(lhs, rhs);
           Value res = create.math.mul(alphaVal, DotProduct);

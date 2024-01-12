@@ -69,9 +69,9 @@ Value ZkMlBuilder::DotProduct(mlir::Value lhs, mlir::Value rhs) const {
   return b().create<zkml::DotProductOp>(loc(), elementType, lhs, rhs);
 }
 
-Value ZkMlBuilder::Gather(
-    Type MemRefType, Value data, Value indices, int64_t axis) const {
-  return b().create<zkml::GatherOp>(loc(), MemRefType, data, indices, axis);
+Value ZkMlBuilder::Gather(Type resultType, 
+    Value prevAcc, Value data, Value accIndex, Value dataIndex) const {
+  return b().create<zkml::GatherOp>(loc(), resultType, prevAcc, data, accIndex, dataIndex);
 }
 template <>
 ValueRange ZkMlBuilder::ArgMinMax<ONNXArgMinOp>(TypeRange resultTypes,
