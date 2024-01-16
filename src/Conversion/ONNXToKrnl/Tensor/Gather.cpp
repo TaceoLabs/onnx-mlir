@@ -148,11 +148,6 @@ private:
                   for (int k = axisLit + 1; k < dataRank; ++k)
                     dataAccessFct.emplace_back(
                         outputAccessFct[kIndexStart + k]);
-                  llvm::outs() << "[";
-                  for (auto t : dataAccessFct) {
-                  llvm::outs() << "hello :)\n";
-                  }
-                  llvm::outs() << "]\n";
                   Value dataVal = createKrnl.loadIE(data, dataAccessFct);
                   Value newAcc = create.zkml.Gather(
                       outputElementType, acc, dataVal, indexVal, innerIndex[0]);
