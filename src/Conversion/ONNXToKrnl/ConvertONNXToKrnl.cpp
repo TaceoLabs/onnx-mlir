@@ -231,7 +231,7 @@ void populateONNXToKrnlConversionPattern(RewritePatternSet &patterns,
   populateLoweringONNXUnsqueezeV11OpPattern(patterns, typeConverter, ctx);
   populateLoweringONNXTransposeOpPattern(patterns, typeConverter, ctx, enableParallel);
   populateLoweringONNXGatherOpPattern(patterns, typeConverter, ctx, zkMl);
-  populateLoweringONNXGatherElementsOpPattern(patterns, typeConverter, ctx);
+  populateLoweringONNXGatherElementsOpPattern(patterns, typeConverter, ctx, zkMl);
   populateLoweringONNXGatherNDOpPattern(patterns, typeConverter, ctx);
   populateLoweringONNXIdentityOpPattern(patterns, typeConverter, ctx);
   populateLoweringONNXConstantOfShapeOpPattern(patterns, typeConverter, ctx);

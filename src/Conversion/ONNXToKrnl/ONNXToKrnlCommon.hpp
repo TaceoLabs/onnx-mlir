@@ -385,7 +385,7 @@ void populateLoweringONNXTransposeOpPattern(mlir::RewritePatternSet &,
 void populateLoweringONNXGatherOpPattern(mlir::RewritePatternSet &,
     mlir::TypeConverter &, mlir::MLIRContext *, bool zkMl);
 void populateLoweringONNXGatherElementsOpPattern(
-    mlir::RewritePatternSet &, mlir::TypeConverter &, mlir::MLIRContext *);
+    mlir::RewritePatternSet &, mlir::TypeConverter &, mlir::MLIRContext *, bool zkMl);
 void populateLoweringONNXGatherNDOpPattern(
     mlir::RewritePatternSet &, mlir::TypeConverter &, mlir::MLIRContext *);
 void populateLoweringONNXPadConstantValuePadOpPattern(
