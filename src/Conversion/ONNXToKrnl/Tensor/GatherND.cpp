@@ -24,8 +24,9 @@ using namespace mlir;
 namespace onnx_mlir {
 
 struct ONNXGatherNDOpLowering : public OpConversionPattern<ONNXGatherNDOp> {
-  ONNXGatherNDOpLowering(TypeConverter &typeConverter, MLIRContext *ctx)
-      : OpConversionPattern(typeConverter, ctx) {}
+  ONNXGatherNDOpLowering(
+      TypeConverter &typeConverter, MLIRContext *ctx, bool zkMl)
+      : OpConversionPattern(typeConverter, ctx), zkMl(zkMl) {}
 
   // When true causes injection of print stmts in the generated code.
   static constexpr bool emitPrintStmts = false;
@@ -43,6 +44,8 @@ struct ONNXGatherNDOpLowering : public OpConversionPattern<ONNXGatherNDOp> {
     createKrnl.printf(")\n");
   }
 
+private:
+  bool zkMl;
   LogicalResult matchAndRewrite(ONNXGatherNDOp gatherNDOp,
       ONNXGatherNDOpAdaptor adaptor,
       ConversionPatternRewriter &rewriter) const final {
@@ -148,76 +151,55 @@ struct ONNXGatherNDOpLowering : public OpConversionPattern<ONNXGatherNDOp> {
       create.krnl.printTensor("reshapedData: ", reshapedData);
     }
 
-    create.krnl.iterateIE(loopDef, loopDef, lbs, ubs,
-        [&](KrnlBuilder &createKrnl, ValueRange loopInd) {
-          // Insert code inside the loop.
-          IndexExprScope innerLoopScope(createKrnl);
+    if (zkMl) {
+      llvm::errs() << "TODO how to do this?\n";
+      exit(0);
+    } else {
 
-          // Access function for 'reshapedIndices'. The first 2 indices are
-          // equal to the loop indexes.
-          DimsExpr reshapedIndicesAccessFct;
-          getIndexExprList<DimIndexExpr>(loopInd, reshapedIndicesAccessFct);
+      create.krnl.iterateIE(loopDef, loopDef, lbs, ubs,
+          [&](KrnlBuilder &createKrnl, ValueRange loopInd) {
+            // Insert code inside the loop.
+            IndexExprScope innerLoopScope(createKrnl);
 
-          // Access function for 'reshapedData'. The first index is equal to the
-          // first loop index.
-          DimsExpr reshapedDataAccessFct;
-          IndexExpr ind = SymbolIndexExpr(loopInd[0]);
-          reshapedDataAccessFct.emplace_back(ind);
+            // Access function for 'reshapedIndices'. The first 2 indices are
+            // equal to the loop indexes.
+            DimsExpr reshapedIndicesAccessFct;
+            getIndexExprList<DimIndexExpr>(loopInd, reshapedIndicesAccessFct);
 
-          // The last index of the access function for 'reshapedIndices' is
-          // given by the values of indices.shape[-1].
-          // The loaded values from 'reshapedIndices' are the next set of
-          // indices to push to the `reshapedDataAccessFct`.
-          for (unsigned i = 0; i < indicesLastDim; ++i) {
-            IndexExpr ind = LiteralIndexExpr(i);
-            reshapedIndicesAccessFct.emplace_back(ind);
+            // Access function for 'reshapedData'. The first index is equal to
+            // the first loop index.
+            DimsExpr reshapedDataAccessFct;
+            IndexExpr ind = SymbolIndexExpr(loopInd[0]);
+            reshapedDataAccessFct.emplace_back(ind);
 
-            if (emitPrintStmts)
-              printIndices("indices", reshapedIndicesAccessFct, createKrnl);
+            // The last index of the access function for 'reshapedIndices' is
+            // given by the values of indices.shape[-1].
+            // The loaded values from 'reshapedIndices' are the next set of
+            // indices to push to the `reshapedDataAccessFct`.
+            for (unsigned i = 0; i < indicesLastDim; ++i) {
+              IndexExpr ind = LiteralIndexExpr(i);
+              reshapedIndicesAccessFct.emplace_back(ind);
 
-            Value indexVal =
-                createKrnl.loadIE(reshapedIndices, reshapedIndicesAccessFct);
-            reshapedIndicesAccessFct.pop_back();
+              if (emitPrintStmts)
+                printIndices("indices", reshapedIndicesAccessFct, createKrnl);
 
-            if (emitPrintStmts) {
-              createKrnl.printf("index = ", indexVal, indexVal.getType());
-              createKrnl.printf("\n");
+              Value indexVal =
+                  createKrnl.loadIE(reshapedIndices, reshapedIndicesAccessFct);
+              reshapedIndicesAccessFct.pop_back();
+
+              if (emitPrintStmts) {
+                createKrnl.printf("index = ", indexVal, indexVal.getType());
+                createKrnl.printf("\n");
+              }
+
+              IndexExpr index = NonAffineIndexExpr(indexVal);
+              reshapedDataAccessFct.emplace_back(index);
             }
 
-            IndexExpr index = NonAffineIndexExpr(indexVal);
-            reshapedDataAccessFct.emplace_back(index);
-          }
-
-          if (indicesLastDim == dataRank - b) {
-            // When indices.shape[-1] is equal to (rank(data) - b) the
-            // `reshapedDataAccessFct` computed so far has the same number of
-            // indices as the rank of 'reshapedData'.
-            assert((int64_t)reshapedDataAccessFct.size() == reshapedDataRank &&
-                   "Access function should have the same rank as reshapedData");
-
-            if (emitPrintStmts)
-              printIndices("data indices", reshapedDataAccessFct, createKrnl);
-
-            // Gather value from the 'data' tensor and store it into
-            // 'outputDataBuffer'.
-            Value val = createKrnl.loadIE(reshapedData, reshapedDataAccessFct);
-            Value storeIndexVal = createKrnl.load(storeIndex);
-            createKrnl.store(val, outputDataBuffer, storeIndexVal);
-
-            // Bump up the storeIndex.
-            createKrnl.store(create.math.add(storeIndexVal, iOne), storeIndex);
-          } else {
-            assert((indicesLastDim < dataRank - b) &&
-                   "Expecting indices.shape[-1] to be smaller than "
-                   "rank(indices) - b");
-
-            // When indices.shape[-1] is less than (rank(data) - b) the
-            // `reshapedDataAccessFct` computed so far yields a slice which
-            // needs to be inserted into the output buffer.
-            int64_t reshapedDataLastDim = dataShape[dataRank - 1];
-            for (int64_t i = 0; i < reshapedDataLastDim; ++i) {
-              IndexExpr ind = LiteralIndexExpr(i);
-              reshapedDataAccessFct.emplace_back(ind);
+            if (indicesLastDim == dataRank - b) {
+              // When indices.shape[-1] is equal to (rank(data) - b) the
+              // `reshapedDataAccessFct` computed so far has the same number of
+              // indices as the rank of 'reshapedData'.
               assert(
                   (int64_t)reshapedDataAccessFct.size() == reshapedDataRank &&
                   "Access function should have the same rank as reshapedData");
@@ -229,22 +211,54 @@ struct ONNXGatherNDOpLowering : public OpConversionPattern<ONNXGatherNDOp> {
               // 'outputDataBuffer'.
               Value val =
                   createKrnl.loadIE(reshapedData, reshapedDataAccessFct);
-              reshapedDataAccessFct.pop_back();
-
-              if (emitPrintStmts) {
-                createKrnl.printf("val = ", val, val.getType());
-                createKrnl.printf("\n");
-              }
-
               Value storeIndexVal = createKrnl.load(storeIndex);
               createKrnl.store(val, outputDataBuffer, storeIndexVal);
 
               // Bump up the storeIndex.
               createKrnl.store(
                   create.math.add(storeIndexVal, iOne), storeIndex);
+            } else {
+              assert((indicesLastDim < dataRank - b) &&
+                     "Expecting indices.shape[-1] to be smaller than "
+                     "rank(indices) - b");
+
+              // When indices.shape[-1] is less than (rank(data) - b) the
+              // `reshapedDataAccessFct` computed so far yields a slice which
+              // needs to be inserted into the output buffer.
+              int64_t reshapedDataLastDim = dataShape[dataRank - 1];
+              for (int64_t i = 0; i < reshapedDataLastDim; ++i) {
+                IndexExpr ind = LiteralIndexExpr(i);
+                reshapedDataAccessFct.emplace_back(ind);
+                assert(
+                    (int64_t)reshapedDataAccessFct.size() == reshapedDataRank &&
+                    "Access function should have the same rank as "
+                    "reshapedData");
+
+                if (emitPrintStmts)
+                  printIndices(
+                      "data indices", reshapedDataAccessFct, createKrnl);
+
+                // Gather value from the 'data' tensor and store it into
+                // 'outputDataBuffer'.
+                Value val =
+                    createKrnl.loadIE(reshapedData, reshapedDataAccessFct);
+                reshapedDataAccessFct.pop_back();
+
+                if (emitPrintStmts) {
+                  createKrnl.printf("val = ", val, val.getType());
+                  createKrnl.printf("\n");
+                }
+
+                Value storeIndexVal = createKrnl.load(storeIndex);
+                createKrnl.store(val, outputDataBuffer, storeIndexVal);
+
+                // Bump up the storeIndex.
+                createKrnl.store(
+                    create.math.add(storeIndexVal, iOne), storeIndex);
+              }
             }
-          }
-        });
+          });
+    }
 
     // Finally reshape 'outputDataBuffer' to the shape of the output.
     DimsExpr newOutputShape;
@@ -264,8 +278,8 @@ struct ONNXGatherNDOpLowering : public OpConversionPattern<ONNXGatherNDOp> {
 };
 
 void populateLoweringONNXGatherNDOpPattern(RewritePatternSet &patterns,
-    TypeConverter &typeConverter, MLIRContext *ctx) {
-  patterns.insert<ONNXGatherNDOpLowering>(typeConverter, ctx);
+    TypeConverter &typeConverter, MLIRContext *ctx, bool zkMl) {
+  patterns.insert<ONNXGatherNDOpLowering>(typeConverter, ctx, zkMl);
 }
 
 } // namespace onnx_mlir
