@@ -24,6 +24,9 @@ using namespace mlir;
 
 namespace onnx_mlir {
 
+namespace {
+bool zkMlIndicator = false;
+}
 // =============================================================================
 
 /// Emit post-processing for variadic element-wise ops.
@@ -424,13 +427,17 @@ Value emitScalarOpFor<ONNXSinhOp>(ConversionPatternRewriter &rewriter,
   //                         ConstantOp 2)
   CheckIfCustomScalarOpIsSupported<ONNXSinhOp>(elementType);
   Value operand = scalarOperands[0];
-  MultiDialectBuilder<MathBuilder> create(rewriter, loc);
-  Value zero = create.math.constant(elementType, 0);
-  Value two = create.math.constant(elementType, 2);
-  Value neg = create.math.sub(zero, operand);
-  Value exp = create.math.exp(operand);
-  Value negExp = create.math.exp(neg);
-  return create.math.div(create.math.sub(exp, negExp), two);
+  MultiDialectBuilder<MathBuilder, ZkMlBuilder> create(rewriter, loc);
+  if (zkMlIndicator) {
+    return create.zkml.Sinh(elementType, operand);
+  } else {
+    Value zero = create.math.constant(elementType, 0);
+    Value two = create.math.constant(elementType, 2);
+    Value neg = create.math.sub(zero, operand);
+    Value exp = create.math.exp(operand);
+    Value negExp = create.math.exp(neg);
+    return create.math.div(create.math.sub(exp, negExp), two);
+  }
 }
 
 //===----------------------------------------------------------------------===//
@@ -458,13 +465,17 @@ Value emitScalarOpFor<ONNXCoshOp>(ConversionPatternRewriter &rewriter,
   //                         ConstantOp 2)
   CheckIfCustomScalarOpIsSupported<ONNXCoshOp>(elementType);
   Value operand = scalarOperands[0];
-  MultiDialectBuilder<MathBuilder> create(rewriter, loc);
-  Value zero = create.math.constant(elementType, 0);
-  Value two = create.math.constant(elementType, 2);
-  Value neg = create.math.sub(zero, operand);
-  Value exp = create.math.exp(operand);
-  Value negExp = create.math.exp(neg);
-  return create.math.div(create.math.add(exp, negExp), two);
+  MultiDialectBuilder<MathBuilder, ZkMlBuilder> create(rewriter, loc);
+  if (zkMlIndicator) {
+    return create.zkml.Cosh(elementType, operand);
+  } else {
+    Value zero = create.math.constant(elementType, 0);
+    Value two = create.math.constant(elementType, 2);
+    Value neg = create.math.sub(zero, operand);
+    Value exp = create.math.exp(operand);
+    Value negExp = create.math.exp(neg);
+    return create.math.div(create.math.add(exp, negExp), two);
+  }
 }
 
 //===----------------------------------------------------------------------===//
@@ -2472,7 +2483,8 @@ struct ONNXWhereOpLowering : public ConversionPattern {
 
 void populateLoweringONNXElementwiseOpPattern(RewritePatternSet &patterns,
     TypeConverter &typeConverter, MLIRContext *ctx, DimAnalysis *dimAnalysis,
-    bool enableSIMD, bool enableParallel) {
+    bool enableSIMD, bool enableParallel, bool zkMl) {
+  zkMlIndicator = zkMl;
   patterns.insert<ONNXElementwiseUnaryOpLowering<mlir::ONNXAbsOp>,
       ONNXElementwiseVariadicOpLowering<mlir::ONNXAddOp>,
       ONNXElementwiseVariadicOpLowering<mlir::ONNXAndOp>,

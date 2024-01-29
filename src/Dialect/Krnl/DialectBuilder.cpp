@@ -19,6 +19,7 @@
 #include "mlir/Dialect/zkml/IR/ArgMax.h"
 #include "mlir/Dialect/zkml/IR/ArgMin.h"
 #include "mlir/Dialect/zkml/IR/Gather.h"
+#include "mlir/Dialect/zkml/IR/Trigonometric.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "src/Dialect/Krnl/DialectBuilder.hpp"
 #include "src/Dialect/ONNX/ONNXOps.hpp"
@@ -69,10 +70,20 @@ Value ZkMlBuilder::DotProduct(mlir::Value lhs, mlir::Value rhs) const {
   return b().create<zkml::DotProductOp>(loc(), elementType, lhs, rhs);
 }
 
-Value ZkMlBuilder::Gather(Type resultType, 
-    Value prevAcc, Value data, Value accIndex, Value dataIndex) const {
-  return b().create<zkml::GatherOp>(loc(), resultType, prevAcc, data, accIndex, dataIndex);
+Value ZkMlBuilder::Gather(Type resultType, Value prevAcc, Value data,
+    Value accIndex, Value dataIndex) const {
+  return b().create<zkml::GatherOp>(
+      loc(), resultType, prevAcc, data, accIndex, dataIndex);
 }
+
+Value ZkMlBuilder::Sinh(Type resultType, Value operand) const {
+  return b().create<zkml::SinhOp>(loc(), resultType, operand);
+}
+
+Value ZkMlBuilder::Cosh(Type resultType, Value operand) const {
+  return b().create<zkml::CoshOp>(loc(), resultType, operand);
+}
+
 template <>
 ValueRange ZkMlBuilder::ArgMinMax<ONNXArgMinOp>(TypeRange resultTypes,
     Value acc, Value next, Value indexAcc, Value indexNext,
@@ -81,6 +92,7 @@ ValueRange ZkMlBuilder::ArgMinMax<ONNXArgMinOp>(TypeRange resultTypes,
       loc(), resultTypes, acc, next, indexAcc, indexNext, isSelectLastIndex);
   return ArgMin.getResults();
 }
+
 template <>
 ValueRange ZkMlBuilder::ArgMinMax<ONNXArgMaxOp>(TypeRange resultTypes,
     Value acc, Value next, Value indexAcc, Value indexNext,
