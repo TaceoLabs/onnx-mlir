@@ -16,10 +16,7 @@
 #include <cassert>
 #include <cstdint>
 
-#include "mlir/Dialect/zkml/IR/ArgMax.h"
-#include "mlir/Dialect/zkml/IR/ArgMin.h"
-#include "mlir/Dialect/zkml/IR/Gather.h"
-#include "mlir/Dialect/zkml/IR/Trigonometric.h"
+#include "mlir/Dialect/zkml/ZkMlOps.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "src/Dialect/Krnl/DialectBuilder.hpp"
 #include "src/Dialect/ONNX/ONNXOps.hpp"
@@ -74,6 +71,10 @@ Value ZkMlBuilder::Gather(Type resultType, Value prevAcc, Value data,
     Value accIndex, Value dataIndex) const {
   return b().create<zkml::GatherOp>(
       loc(), resultType, prevAcc, data, accIndex, dataIndex);
+}
+
+Value ZkMlBuilder::Exp(Value operand) const {
+  return b().create<zkml::ExpNoClipOp>(loc(), operand.getType(), operand);
 }
 
 Value ZkMlBuilder::Sinh(Type resultType, Value operand) const {

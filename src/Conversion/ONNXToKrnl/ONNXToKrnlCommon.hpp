@@ -323,7 +323,7 @@ void populateLoweringONNXReductionOpPattern(mlir::RewritePatternSet &,
     mlir::TypeConverter &, mlir::MLIRContext *, bool enableSIMD,
     bool enableParallel);
 void populateLoweringONNXSoftmaxOpPattern(mlir::RewritePatternSet &,
-    mlir::TypeConverter &, mlir::MLIRContext *, bool enableParallel);
+    mlir::TypeConverter &, mlir::MLIRContext *, bool enableParallel, bool zkMl);
 void populateLoweringONNXTopKOpPattern(
     mlir::RewritePatternSet &, mlir::TypeConverter &, mlir::MLIRContext *);
 void populateLoweringONNXTriluOpPattern(

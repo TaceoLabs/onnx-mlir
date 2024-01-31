@@ -14,7 +14,6 @@
 
 #pragma once
 
-#include "mlir/Dialect/zkml/IR/DotProduct.h"
 #include "mlir/IR/Types.h"
 #include "mlir/IR/Value.h"
 #include "src/Dialect/Krnl/KrnlOps.hpp"
@@ -37,6 +36,7 @@ struct ZkMlBuilder : public DialectBuilder {
   mlir::Value DotProduct(mlir::Value lhs, mlir::Value rhs) const;
   mlir::Value Gather(mlir::Type resultType, mlir::Value prevAcc, mlir::Value data, mlir::Value accIndex,
       mlir::Value dataIndex) const;
+  mlir::Value Exp(mlir::Value operand) const;
   mlir::Value Sinh(mlir::Type resultType, mlir::Value operand) const;
   mlir::Value Cosh(mlir::Type resultType, mlir::Value operand) const;
   template <typename ARG_OP>

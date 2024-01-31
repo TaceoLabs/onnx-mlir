@@ -207,7 +207,7 @@ void populateONNXToKrnlConversionPattern(RewritePatternSet &patterns,
   populateLoweringONNXGemmOpPattern(patterns, typeConverter, ctx, enableTiling, enableSIMD, enableParallel, zkMl);
   populateLoweringONNXHardmaxOpPattern(patterns, typeConverter, ctx);
   populateLoweringONNXReductionOpPattern(patterns, typeConverter, ctx, enableSIMD, enableParallel);
-  populateLoweringONNXSoftmaxOpPattern(patterns, typeConverter, ctx, enableParallel);
+  populateLoweringONNXSoftmaxOpPattern(patterns, typeConverter, ctx, enableParallel, zkMl);
   populateLoweringONNXTopKOpPattern(patterns, typeConverter, ctx);
   populateLoweringONNXTriluOpPattern(patterns, typeConverter, ctx);
   populateLoweringONNXMatMulOpPattern(patterns, typeConverter, ctx, dimAnalysis, enableTiling, enableSIMD, enableParallel, zkMl);
