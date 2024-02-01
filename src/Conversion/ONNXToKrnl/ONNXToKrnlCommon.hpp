@@ -441,7 +441,7 @@ void populateLoweringONNXReverseSequenceOpPattern(
 void populateLoweringONNXExpandOpPattern(
     mlir::RewritePatternSet &, mlir::TypeConverter &, mlir::MLIRContext *);
 void populateLoweringONNXOneHotOpPattern(
-    mlir::RewritePatternSet &, mlir::TypeConverter &, mlir::MLIRContext *);
+    mlir::RewritePatternSet &, mlir::TypeConverter &, mlir::MLIRContext *, bool zkMl);
 void populateLoweringONNXCompressOpPattern(
     mlir::RewritePatternSet &, mlir::TypeConverter &, mlir::MLIRContext *);
 void populateLoweringONNXPrintSignaturePattern(

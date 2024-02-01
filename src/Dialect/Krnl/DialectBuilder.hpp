@@ -34,8 +34,10 @@ struct ZkMlBuilder : public DialectBuilder {
   virtual ~ZkMlBuilder() {}
 
   mlir::Value DotProduct(mlir::Value lhs, mlir::Value rhs) const;
-  mlir::Value Gather(mlir::Type resultType, mlir::Value prevAcc, mlir::Value data, mlir::Value accIndex,
-      mlir::Value dataIndex) const;
+  mlir::Value CmpSet(mlir::Type resultType, mlir::Value cmpSet, mlir::Value dEq,
+      mlir::Value dNeq, mlir::Value index) const;
+  mlir::Value Gather(mlir::Type resultType, mlir::Value prevAcc,
+      mlir::Value data, mlir::Value accIndex, mlir::Value dataIndex) const;
   mlir::Value Exp(mlir::Value operand) const;
   mlir::Value Sinh(mlir::Type resultType, mlir::Value operand) const;
   mlir::Value Cosh(mlir::Type resultType, mlir::Value operand) const;

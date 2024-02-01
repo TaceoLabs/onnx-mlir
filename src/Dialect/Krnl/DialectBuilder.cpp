@@ -73,6 +73,12 @@ Value ZkMlBuilder::Gather(Type resultType, Value prevAcc, Value data,
       loc(), resultType, prevAcc, data, accIndex, dataIndex);
 }
 
+Value ZkMlBuilder::CmpSet(
+    Type resultType, Value cmpSet, Value dEq, Value dNeq, Value index) const {
+  return b().create<zkml::CmpSetOp>(
+      loc(), resultType, cmpSet, dEq, dNeq, index);
+}
+
 Value ZkMlBuilder::Exp(Value operand) const {
   return b().create<zkml::ExpNoClipOp>(loc(), operand.getType(), operand);
 }

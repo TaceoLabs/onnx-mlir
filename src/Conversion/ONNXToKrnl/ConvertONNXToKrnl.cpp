@@ -256,7 +256,7 @@ void populateONNXToKrnlConversionPattern(RewritePatternSet &patterns,
   populateLoweringONNXNonZeroOpPattern(patterns, typeConverter, ctx);
   populateLoweringONNXReverseSequenceOpPattern(patterns, typeConverter, ctx);
   populateLoweringONNXExpandOpPattern(patterns, typeConverter, ctx);
-  populateLoweringONNXOneHotOpPattern(patterns, typeConverter, ctx);
+  populateLoweringONNXOneHotOpPattern(patterns, typeConverter, ctx, zkMl);
   populateLoweringONNXCompressOpPattern(patterns, typeConverter, ctx);
   populateLoweringONNXPrintSignaturePattern(patterns, typeConverter, ctx);
   populateLoweringONNXLayoutTransformOpPattern(patterns, typeConverter, ctx);
