@@ -57,8 +57,12 @@ static Value getLoopIndexByAxisAndOffset(MathBuilder &createMath,
 }
 
 struct ONNXCumSumOpLowering : public OpConversionPattern<ONNXCumSumOp> {
-  ONNXCumSumOpLowering(TypeConverter &typeConverter, MLIRContext *ctx)
-      : OpConversionPattern(typeConverter, ctx) {}
+  ONNXCumSumOpLowering(
+      TypeConverter &typeConverter, MLIRContext *ctx, bool zkMl)
+      : OpConversionPattern(typeConverter, ctx), zkMl(zkMl) {}
+
+private:
+  bool zkMl;
 
   /// We use a parallel algorithm for cumsum [1] as follows:
   /// Assume that input is x whose shape in [n,m], and axis for cumsum is 0.
@@ -118,6 +122,8 @@ struct ONNXCumSumOpLowering : public OpConversionPattern<ONNXCumSumOp> {
     uint64_t rank = create.krnlIE.getShapedTypeRank(X);
     create.krnlIE.getShapeAsDims(X, xDims);
     LiteralIndexExpr zeroIE(0);
+
+    Value twoInt = create.math.constant(indexTy, 2);
 
     // Read axis.
     IndexExpr axisIE = create.krnlIE.getIntFromArrayAsSymbol(axis, 0);
@@ -197,9 +203,14 @@ struct ONNXCumSumOpLowering : public OpConversionPattern<ONNXCumSumOp> {
 
           // Compute index offset: offset = 2^step.
           Value step = stepLoopInd[0];
-          step = create.math.cast(f32Ty, step);
-          Value offset = create.math.exp2(step);
-          offset = create.math.castToIndex(offset);
+          Value offset;
+          if (zkMl) {
+            offset = create.math.powi(twoInt, step); 
+          } else {
+            step = create.math.cast(f32Ty, step);
+            offset = create.math.exp2(step);
+            offset = create.math.castToIndex(offset);
+          }
 
           // Inner loop iterates over the output to compute sums.
           //   for i range(n):
@@ -244,8 +255,8 @@ struct ONNXCumSumOpLowering : public OpConversionPattern<ONNXCumSumOp> {
 };
 
 void populateLoweringONNXCumSumOpPattern(RewritePatternSet &patterns,
-    TypeConverter &typeConverter, MLIRContext *ctx) {
-  patterns.insert<ONNXCumSumOpLowering>(typeConverter, ctx);
+    TypeConverter &typeConverter, MLIRContext *ctx, bool zkMl) {
+  patterns.insert<ONNXCumSumOpLowering>(typeConverter, ctx, zkMl);
 }
 
 } // namespace onnx_mlir

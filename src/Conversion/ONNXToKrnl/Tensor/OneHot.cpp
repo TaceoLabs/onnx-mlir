@@ -100,12 +100,8 @@ private:
             if (inputVal.getType().isa<FloatType>()) {
               inputVal = create.math.cast(indicesType, inputVal);
             }
-            llvm::outs() << inputVal << "\n";
-            llvm::outs() << depthInt << "\n";
             ValueRange depthLoopDef = createKrnl.defineLoops(1);
-            std::cout << "done\n";
             Value inputNeg = create.math.add(inputVal, depthInt);
-            std::cout << "done\n";
             Value isNeg = create.math.lt(inputVal, zeroInt);
             Value inputIndex = create.math.select(isNeg, inputNeg, inputVal);
             Value isTooSmall = create.math.lt(inputIndex, zeroInt);

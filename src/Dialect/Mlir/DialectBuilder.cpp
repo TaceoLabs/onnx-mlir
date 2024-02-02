@@ -254,6 +254,12 @@ Value MathBuilder::pow(Value base, Value exp) const {
   llvm_unreachable("expected base float");
 }
 
+Value MathBuilder::powi(Value base, Value exp) const {
+  if (isIntegerWithVector(base.getType()) && isIntegerWithVector(exp.getType()))
+    return b().create<math::IPowIOp>(loc(), base, exp);
+  llvm_unreachable("expected base and exp int");
+}
+
 Value MathBuilder::neg(Value val) const {
   if (isIntegerWithVector(val.getType()))
     // Returns 0 - val.

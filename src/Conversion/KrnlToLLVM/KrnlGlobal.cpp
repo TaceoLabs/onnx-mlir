@@ -190,7 +190,6 @@ private:
           llvmStringAttr);
     } else {
       if (denseAttr.getElementType().isa<StringType>()) {
-      llvm::outs() << "I will now lower that stupid STRING array???\n";
         global = lowerStringLiteral(krnlGlobalOp, globalType, rewriter);
       }
       else  {
