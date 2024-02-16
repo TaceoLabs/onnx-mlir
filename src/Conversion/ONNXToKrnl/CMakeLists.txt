@@ -16,6 +16,7 @@ add_onnx_mlir_library(OMONNXToKrnl
   Math/Elementwise.cpp
   Math/Gemm.cpp
   Math/Hardmax.cpp
+  Math/ZkHardmax.cpp
   Math/LRN.cpp
   Math/MatMul.cpp
   Math/MatMulInteger.cpp

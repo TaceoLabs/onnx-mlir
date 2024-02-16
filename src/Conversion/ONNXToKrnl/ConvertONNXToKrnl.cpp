@@ -12,7 +12,7 @@
 // Krnl IR and standard operations.
 //
 //===----------------------------------------------------------------------===//
-//TODO check imports
+// TODO check imports
 #include "mlir/Dialect/OpenMP/OpenMPDialect.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Shape/IR/Shape.h"
@@ -21,8 +21,8 @@
 #include "mlir/Dialect/Index/IR/IndexDialect.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Shape/IR/Shape.h"
-#include "src/Compiler/CompilerOptions.hpp"
 #include "mlir/Dialect/zkml/ZkMlDialect.h"
+#include "src/Compiler/CompilerOptions.hpp"
 
 #include "src/Accelerators/Accelerator.hpp"
 #include "src/Builder/ModelInputShaper.hpp"
@@ -205,7 +205,11 @@ void populateONNXToKrnlConversionPattern(RewritePatternSet &patterns,
   populateLoweringONNXCumSumOpPattern(patterns, typeConverter, ctx, zkMl);
   populateLoweringONNXElementwiseOpPattern(patterns, typeConverter, ctx, dimAnalysis, enableSIMD, enableParallel, zkMl);
   populateLoweringONNXGemmOpPattern(patterns, typeConverter, ctx, enableTiling, enableSIMD, enableParallel, zkMl);
-  populateLoweringONNXHardmaxOpPattern(patterns, typeConverter, ctx);
+  if (zkMl) {
+    populateLoweringONNXZkHardmaxOpPattern(patterns, typeConverter, ctx);
+  } else {
+    populateLoweringONNXHardmaxOpPattern(patterns, typeConverter, ctx);
+  }
   populateLoweringONNXReductionOpPattern(patterns, typeConverter, ctx, enableSIMD, enableParallel);
   populateLoweringONNXSoftmaxOpPattern(patterns, typeConverter, ctx, enableParallel, zkMl);
   populateLoweringONNXTopKOpPattern(patterns, typeConverter, ctx);
@@ -357,10 +361,11 @@ void FrontendToKrnlLoweringPass::runOnOperation() {
 
   // We define the specific operations, or dialects, that are legal targets for
   // this lowering.
-  target.addLegalDialect<KrnlDialect, affine::AffineDialect,
-      arith::ArithDialect, func::FuncDialect, linalg::LinalgDialect,
-      math::MathDialect, vector::VectorDialect, memref::MemRefDialect,
-      shape::ShapeDialect, scf::SCFDialect, zkml::ZkMlDialect, index::IndexDialect>();
+  target
+      .addLegalDialect<KrnlDialect, affine::AffineDialect, arith::ArithDialect,
+          func::FuncDialect, linalg::LinalgDialect, math::MathDialect,
+          vector::VectorDialect, memref::MemRefDialect, shape::ShapeDialect,
+          scf::SCFDialect, zkml::ZkMlDialect, index::IndexDialect>();
   // Needed to support unsigned int computations. To be removed if we use a
   // scheme that does not rely on the UnrealizedConversionCastOp.
   target.addLegalOp<::mlir::UnrealizedConversionCastOp>();
@@ -386,8 +391,9 @@ void FrontendToKrnlLoweringPass::runOnOperation() {
   if (!zkMl) {
     // Option`emitDealloc` is deprecated and turned off, make sure we don't have
     // buffer deallocation at this level. Will use MLIR buffer-deallocation for
-    // this purpose instead. However, since the SequenceErase needs to emit memref
-    // dealloc, the previous the following statement is commented out (Chentong)
+    // this purpose instead. However, since the SequenceErase needs to emit
+    // memref dealloc, the previous the following statement is commented out
+    // (Chentong)
     target.addIllegalOp<mlir::memref::DeallocOp>();
   }
 
@@ -440,7 +446,8 @@ void FrontendToKrnlLoweringPass::runOnOperation() {
 
   // Define patterns.
   populateONNXToKrnlConversionPattern(patterns, krnlTypeConverter,
-      &getContext(), dimAnalysis, enableTiling, enableSIMD, enableParallel, zkMl);
+      &getContext(), dimAnalysis, enableTiling, enableSIMD, enableParallel,
+      zkMl);
 
   // Rewrite patterns for accelerators.
   for (auto *accel : onnx_mlir::accel::Accelerator::getAccelerators())
@@ -459,7 +466,6 @@ void FrontendToKrnlLoweringPass::runOnOperation() {
 std::unique_ptr<Pass> createLowerToKrnlPass() {
   return std::make_unique<FrontendToKrnlLoweringPass>();
 }
-
 
 std::unique_ptr<Pass> createLowerToKrnlPass(
     bool enableTiling, bool enableSIMD, bool enableParallel, bool zkMl) {

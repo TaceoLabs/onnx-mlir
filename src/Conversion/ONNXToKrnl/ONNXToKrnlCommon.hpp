@@ -308,6 +308,8 @@ void populateLoweringONNXGemmOpPattern(mlir::RewritePatternSet &,
     bool enableSIMD, bool enableParallel, bool zkMl);
 void populateLoweringONNXHardmaxOpPattern(
     mlir::RewritePatternSet &, mlir::TypeConverter &, mlir::MLIRContext *);
+void populateLoweringONNXZkHardmaxOpPattern(
+    mlir::RewritePatternSet &, mlir::TypeConverter &, mlir::MLIRContext *);
 void populateLoweringONNXLRNOpPattern(
     mlir::RewritePatternSet &, mlir::TypeConverter &, mlir::MLIRContext *);
 void populateLoweringONNXMatMulOpPattern(mlir::RewritePatternSet &,
