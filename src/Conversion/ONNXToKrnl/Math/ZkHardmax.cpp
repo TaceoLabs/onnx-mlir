@@ -46,7 +46,6 @@ struct ONNXZkHardmaxOpLowering : public OpConversionPattern<ONNXHardmaxOp> {
     int64_t rank = memRefType.getRank();
     int64_t axis = llvm::dyn_cast<ONNXHardmaxOp>(op).getAxis();
     axis = axis >= 0 ? axis : rank + axis;
-    llvm::outs() << "axis is " << axis << "\n";
     assert(axis >= -rank && axis <= rank - 1);
     Value resMemRef = create.mem.alloc(memRefType);
     create.krnl.memset(resMemRef, zeroVal);
